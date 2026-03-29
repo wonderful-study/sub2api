@@ -9,14 +9,45 @@
 # =============================================================================
 
 services:
+  tailscale:
+    image: ${TAILSCALE_IMAGE:-tailscale/tailscale:latest}
+    container_name: sub2api-tailscale-dev
+    restart: unless-stopped
+    hostname: ${TAILSCALE_HOSTNAME:-sub2api-home}
+    entrypoint:
+      - /usr/local/bin/tailscaled
+    command:
+      - --socket=/tmp/tailscaled.sock
+      - --statedir=/var/lib/tailscale
+      - --tun=userspace-networking
+    ports:
+      - "${BIND_HOST:-127.0.0.1}:${SERVER_PORT:-8080}:8080"
+    volumes:
+      - ./tailscale_state:/var/lib/tailscale
+    environment:
+      - TS_HOSTNAME=${TAILSCALE_HOSTNAME:-sub2api-home}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=true
+      - HTTP_PROXY=${TAILSCALE_HTTP_PROXY:-}
+      - HTTPS_PROXY=${TAILSCALE_HTTP_PROXY:-}
+      - ALL_PROXY=${TAILSCALE_HTTP_PROXY:-}
+      - NO_PROXY=127.0.0.1,localhost
+      - TZ=${TZ:-Asia/Shanghai}
+    networks:
+      - sub2api-network
+
   sub2api:
     build:
       context: ..
       dockerfile: Dockerfile
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:24-alpine}
+        GOLANG_IMAGE: ${GOLANG_IMAGE:-golang:1.26.1-alpine}
+        ALPINE_IMAGE: ${ALPINE_IMAGE:-alpine:3.21}
+        POSTGRES_IMAGE: ${POSTGRES_IMAGE:-postgres:18-alpine}
     container_name: sub2api-dev
     restart: unless-stopped
-    ports:
-      - "${BIND_HOST:-127.0.0.1}:${SERVER_PORT:-8080}:8080"
+    network_mode: "service:tailscale"
     volumes:
       - ./data:/app/data
     environment:
@@ -41,12 +72,12 @@ services:
       - TOTP_ENCRYPTION_KEY=${TOTP_ENCRYPTION_KEY:-}
       - TZ=${TZ:-Asia/Shanghai}
     depends_on:
+      tailscale:
+        condition: service_started
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    networks:
-      - sub2api-network
     healthcheck:
       test: ["CMD", "wget", "-q", "-T", "5", "-O", "/dev/null", "http://localhost:8080/health"]
       interval: 30s

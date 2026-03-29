@@ -13,7 +13,11 @@ redis_data/
 # Backup files
 *.backup
 *.bak
+*.tar.gz
 
 # Temporary files
 *.tmp
 *.log
+
+# Local tunnel state
+tailscale_state/
