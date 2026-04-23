@@ -28,11 +28,20 @@
 
 ## 当前推荐做法
 
-在源服务器或本地仓库目录执行：
+在当前源机器执行。下面两种目录结构都支持：
+
+1. 完整仓库目录：
 
 ```bash
 cd /path/to/sub2api
 ./deploy/package-server-bundle.sh --stop-stack --restart-stack
+```
+
+2. 只有 `deploy/` 的迁移恢复目录：
+
+```bash
+cd /path/to/sub2api/deploy
+./package-server-bundle.sh 
 ```
 
 脚本会自动：
@@ -130,6 +139,8 @@ docker compose up -d
 docker compose ps
 docker compose logs -f sub2api
 ```
+
+> 注意：新服务器恢复阶段不要执行 `package-server-bundle.sh`。这个脚本是给“当前源机器”生成迁移包用的；新服务器在恢复时只需要 `docker compose up -d`。
 
 ### 6. 验证
 

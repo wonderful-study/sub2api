@@ -3,11 +3,13 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-DEPLOY_DIR="${ROOT_DIR}/deploy"
+SCRIPT_PATH="${SCRIPT_DIR}/$(basename "${BASH_SOURCE[0]}")"
+ROOT_DIR=""
+DEPLOY_DIR=""
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 OUTPUT_PATH=""
 COMPOSE_FILE=""
+PACKAGE_COMPOSE_SOURCE=""
 
 STOP_STACK=false
 RESTART_STACK=false
@@ -30,15 +32,45 @@ for arg in "$@"; do
   esac
 done
 
+resolve_layout() {
+  if [[ -f "${SCRIPT_DIR}/.env" || -f "${SCRIPT_DIR}/docker-compose.yml" || -f "${SCRIPT_DIR}/docker-compose.local.yml" || -d "${SCRIPT_DIR}/data" ]]; then
+    DEPLOY_DIR="${SCRIPT_DIR}"
+    ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+    return 0
+  fi
+
+  if [[ -d "${SCRIPT_DIR}/deploy" ]]; then
+    ROOT_DIR="${SCRIPT_DIR}"
+    DEPLOY_DIR="${SCRIPT_DIR}/deploy"
+    return 0
+  fi
+
+  return 1
+}
+
+if ! resolve_layout; then
+  cat >&2 <<EOF
+Could not locate the deploy directory for packaging.
+
+Run this script in one of these ways:
+  1. From the project root:
+     ./deploy/package-server-bundle.sh --stop-stack --restart-stack
+  2. From inside the deploy directory:
+     ./package-server-bundle.sh --stop-stack --restart-stack
+  3. From a directory that contains deploy/ and a copied package-server-bundle.sh
+EOF
+  exit 1
+fi
+
 if [[ -z "${OUTPUT_PATH}" ]]; then
   OUTPUT_PATH="${ROOT_DIR}/sub2api-server-bundle-${TIMESTAMP}.tar.gz"
 fi
 
 detect_compose_file() {
   local candidates=(
-    "${DEPLOY_DIR}/docker-compose.dev.yml"
-    "${DEPLOY_DIR}/docker-compose.yml"
     "${DEPLOY_DIR}/docker-compose.local.yml"
+    "${DEPLOY_DIR}/docker-compose.yml"
+    "${DEPLOY_DIR}/docker-compose.dev.yml"
   )
 
   if [[ -n "${MANUAL_COMPOSE_FILE}" ]]; then
@@ -63,15 +95,67 @@ detect_compose_file() {
   return 1
 }
 
-COMPOSE_FILE="$(detect_compose_file)"
-if [[ -z "${COMPOSE_FILE}" ]]; then
-  echo "Could not find a docker compose file in ${DEPLOY_DIR}" >&2
+detect_package_compose_source() {
+  local candidates=(
+    "${DEPLOY_DIR}/docker-compose.local.yml"
+    "${DEPLOY_DIR}/docker-compose.yml"
+  )
+
+  for candidate in "${candidates[@]}"; do
+    if [[ -f "${candidate}" ]]; then
+      echo "${candidate}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+compose_uses_local_dirs() {
+  local compose_file="$1"
+
+  grep -Eq '\./data\s*:/app/data' "${compose_file}" &&
+    grep -Eq '\./postgres_data\s*:/var/lib/postgresql/data' "${compose_file}" &&
+    grep -Eq '\./redis_data\s*:/data' "${compose_file}"
+}
+
+if ! COMPOSE_FILE="$(detect_compose_file)"; then
+  cat >&2 <<EOF
+Could not find a docker compose file in ${DEPLOY_DIR}.
+
+Expected one of:
+  - ${DEPLOY_DIR}/docker-compose.local.yml
+  - ${DEPLOY_DIR}/docker-compose.yml
+  - ${DEPLOY_DIR}/docker-compose.dev.yml
+EOF
+  exit 1
+fi
+
+if ! PACKAGE_COMPOSE_SOURCE="$(detect_package_compose_source)"; then
+  cat >&2 <<EOF
+Could not find a local-directory compose file in ${DEPLOY_DIR}.
+
+Expected one of:
+  - ${DEPLOY_DIR}/docker-compose.local.yml
+  - ${DEPLOY_DIR}/docker-compose.yml
+EOF
+  exit 1
+fi
+
+if ! compose_uses_local_dirs "${PACKAGE_COMPOSE_SOURCE}"; then
+  cat >&2 <<EOF
+The compose file at ${PACKAGE_COMPOSE_SOURCE} does not appear to use the local-directory migration layout.
+
+This packaging script only supports deployments that keep data in:
+  - deploy/data
+  - deploy/postgres_data
+  - deploy/redis_data
+EOF
   exit 1
 fi
 
 required_paths=(
   "${DEPLOY_DIR}/.env"
-  "${DEPLOY_DIR}/docker-compose.local.yml"
   "${DEPLOY_DIR}/data"
   "${DEPLOY_DIR}/postgres_data"
   "${DEPLOY_DIR}/redis_data"
@@ -122,8 +206,9 @@ STAGE_DIR="$(mktemp -d)"
 mkdir -p "${STAGE_DIR}/deploy"
 
 cp "${DEPLOY_DIR}/.env" "${STAGE_DIR}/deploy/.env"
-cp "${DEPLOY_DIR}/docker-compose.local.yml" "${STAGE_DIR}/deploy/docker-compose.yml"
-cp "${DEPLOY_DIR}/package-server-bundle.sh" "${STAGE_DIR}/deploy/package-server-bundle.sh"
+cp "${PACKAGE_COMPOSE_SOURCE}" "${STAGE_DIR}/deploy/docker-compose.yml"
+cp "${PACKAGE_COMPOSE_SOURCE}" "${STAGE_DIR}/deploy/docker-compose.local.yml"
+cp "${SCRIPT_PATH}" "${STAGE_DIR}/deploy/package-server-bundle.sh"
 cp -R "${DEPLOY_DIR}/data" "${STAGE_DIR}/deploy/data"
 cp -R "${DEPLOY_DIR}/postgres_data" "${STAGE_DIR}/deploy/postgres_data"
 cp -R "${DEPLOY_DIR}/redis_data" "${STAGE_DIR}/deploy/redis_data"
@@ -142,7 +227,7 @@ cat > "${STAGE_DIR}/deploy/DEPLOY_ON_SERVER.txt" <<'EOF'
 6. Check status:
    docker compose ps
    docker compose logs -f sub2api
-7. For the next migration, create a fresh bundle on the source machine:
+7. If this machine later becomes the source machine for the next migration, run from this deploy directory:
    ./package-server-bundle.sh --stop-stack --restart-stack
 EOF
 
