@@ -162,6 +162,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/online-experience',
+    name: 'OnlineExperience',
+    component: () => import('@/modules/online-experience/OnlineExperienceView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Online Experience',
+      titleKey: 'onlineExperience.title',
+      descriptionKey: 'onlineExperience.description'
+    }
+  },
+  {
     path: '/keys',
     name: 'Keys',
     component: () => import('@/views/user/KeysView.vue'),

@@ -77,11 +77,16 @@ func APIKeyFromService(k *service.APIKey) *APIKey {
 	if k == nil {
 		return nil
 	}
+	keyValue := k.Key
+	nameValue := service.VisibleAPIKeyName(k.Name)
+	if service.IsInternalAPIKeyName(k.Name) {
+		keyValue = ""
+	}
 	out := &APIKey{
 		ID:            k.ID,
 		UserID:        k.UserID,
-		Key:           k.Key,
-		Name:          k.Name,
+		Key:           keyValue,
+		Name:          nameValue,
 		GroupID:       k.GroupID,
 		Status:        k.Status,
 		IPWhitelist:   k.IPWhitelist,

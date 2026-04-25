@@ -134,6 +134,10 @@ func (h *APIKeyHandler) GetByID(c *gin.Context) {
 		response.Forbidden(c, "Not authorized to access this key")
 		return
 	}
+	if service.IsInternalAPIKeyName(key.Name) {
+		response.NotFound(c, "API key not found")
+		return
+	}
 
 	response.Success(c, dto.APIKeyFromService(key))
 }
@@ -198,6 +202,16 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 		return
 	}
 
+	key, err := h.apiKeyService.GetByID(c.Request.Context(), keyID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if key.UserID != subject.UserID || service.IsInternalAPIKeyName(key.Name) {
+		response.NotFound(c, "API key not found")
+		return
+	}
+
 	var req UpdateAPIKeyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
@@ -237,7 +251,7 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 		}
 	}
 
-	key, err := h.apiKeyService.Update(c.Request.Context(), keyID, subject.UserID, svcReq)
+	key, err = h.apiKeyService.Update(c.Request.Context(), keyID, subject.UserID, svcReq)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -258,6 +272,16 @@ func (h *APIKeyHandler) Delete(c *gin.Context) {
 	keyID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
 		response.BadRequest(c, "Invalid key ID")
+		return
+	}
+
+	key, err := h.apiKeyService.GetByID(c.Request.Context(), keyID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if key.UserID != subject.UserID || service.IsInternalAPIKeyName(key.Name) {
+		response.NotFound(c, "API key not found")
 		return
 	}
 

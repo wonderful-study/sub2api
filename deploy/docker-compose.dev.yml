@@ -42,7 +42,7 @@ services:
       dockerfile: Dockerfile
       args:
         NODE_IMAGE: ${NODE_IMAGE:-node:24-alpine}
-        GOLANG_IMAGE: ${GOLANG_IMAGE:-golang:1.26.1-alpine}
+        GOLANG_IMAGE: ${GOLANG_IMAGE:-golang:1.26.2-alpine}
         ALPINE_IMAGE: ${ALPINE_IMAGE:-alpine:3.21}
         POSTGRES_IMAGE: ${POSTGRES_IMAGE:-postgres:18-alpine}
     container_name: sub2api-dev

@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -14,7 +15,17 @@ func RegisterUserRoutes(
 	h *handler.Handlers,
 	jwtAuth middleware.JWTAuthMiddleware,
 	settingService *service.SettingService,
+	opsService *service.OpsService,
+	cfg *config.Config,
 ) {
+	bodyLimit := gin.HandlerFunc(func(c *gin.Context) { c.Next() })
+	if cfg != nil && cfg.Gateway.MaxBodySize > 0 {
+		bodyLimit = middleware.RequestBodyLimit(cfg.Gateway.MaxBodySize)
+	}
+	clientRequestID := middleware.ClientRequestID()
+	opsErrorLogger := handler.OpsErrorLoggerMiddleware(opsService)
+	endpointNorm := handler.InboundEndpointMiddleware()
+
 	authenticated := v1.Group("")
 	authenticated.Use(gin.HandlerFunc(jwtAuth))
 	authenticated.Use(middleware.BackendModeUserGuard(settingService))
@@ -102,6 +113,15 @@ func RegisterUserRoutes(
 			subscriptions.GET("/active", h.Subscription.GetActive)
 			subscriptions.GET("/progress", h.Subscription.GetProgress)
 			subscriptions.GET("/summary", h.Subscription.GetSummary)
+		}
+
+		onlineExperience := authenticated.Group("/online-experience")
+		{
+			onlineExperience.GET("/groups", h.OnlineExperience.ListGroups)
+			onlineExperience.GET("/models", h.OnlineExperience.ListModels)
+			onlineExperience.POST("/chat", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, h.OnlineExperience.BindGroupContext(), h.OpenAIGateway.ChatCompletions)
+			onlineExperience.POST("/images/generations", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, h.OnlineExperience.BindGroupContext(), h.OpenAIGateway.Images)
+			onlineExperience.POST("/images/edits", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, h.OnlineExperience.BindGroupContext(), h.OpenAIGateway.Images)
 		}
 	}
 }
