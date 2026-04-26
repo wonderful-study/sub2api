@@ -36,6 +36,8 @@ func RegisterUserRoutes(
 			user.GET("/profile", h.User.GetProfile)
 			user.PUT("/password", h.User.ChangePassword)
 			user.PUT("", h.User.UpdateProfile)
+			user.GET("/aff", h.User.GetAffiliate)
+			user.POST("/aff/transfer", h.User.TransferAffiliateQuota)
 			user.POST("/account-bindings/email/send-code", h.User.SendEmailBindingCode)
 			user.POST("/account-bindings/email", h.User.BindEmailIdentity)
 			user.DELETE("/account-bindings/:provider", h.User.UnbindIdentity)
@@ -77,6 +79,12 @@ func RegisterUserRoutes(
 		{
 			groups.GET("/available", h.APIKey.GetAvailableGroups)
 			groups.GET("/rates", h.APIKey.GetUserGroupRates)
+		}
+
+		// 用户可用渠道（非管理员接口）
+		channels := authenticated.Group("/channels")
+		{
+			channels.GET("/available", h.AvailableChannel.List)
 		}
 
 		// 使用记录
@@ -122,6 +130,13 @@ func RegisterUserRoutes(
 			onlineExperience.POST("/chat", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, h.OnlineExperience.BindGroupContext(), h.OpenAIGateway.ChatCompletions)
 			onlineExperience.POST("/images/generations", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, h.OnlineExperience.BindGroupContext(), h.OpenAIGateway.Images)
 			onlineExperience.POST("/images/edits", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, h.OnlineExperience.BindGroupContext(), h.OpenAIGateway.Images)
+		}
+
+		// 渠道监控（用户只读）
+		monitors := authenticated.Group("/channel-monitors")
+		{
+			monitors.GET("", h.ChannelMonitor.List)
+			monitors.GET("/:id/status", h.ChannelMonitor.GetStatus)
 		}
 	}
 }
