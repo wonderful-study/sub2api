@@ -6,12 +6,18 @@ on:
       - main
     paths:
       - backend/cmd/server/VERSION
+  pull_request:
+    types:
+      - closed
+    branches:
+      - main
 
 permissions:
   contents: write
 
 jobs:
   tag:
+    if: ${{ github.event_name == 'push' || (github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'sync/upstream-v')) }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -21,12 +27,23 @@ jobs:
 
       - name: Create release tag if missing
         run: |
-          VERSION="$(tr -d '\r\n' < backend/cmd/server/VERSION)"
-          if [ -z "$VERSION" ]; then
-            echo "VERSION is empty" >&2
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            HEAD_REF="${{ github.event.pull_request.head.ref }}"
+            TAG="${HEAD_REF#sync/upstream-}"
+          else
+            VERSION="$(tr -d '\r\n' < backend/cmd/server/VERSION)"
+            if [ -z "$VERSION" ]; then
+              echo "VERSION is empty" >&2
+              exit 1
+            fi
+            TAG="v${VERSION#v}"
+          fi
+
+          if [ -z "$TAG" ] || [ "$TAG" = "$HEAD_REF" ]; then
+            echo "Unable to resolve release tag" >&2
             exit 1
           fi
-          TAG="v${VERSION#v}"
+          TAG="v${TAG#v}"
           if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
             echo "${TAG} already exists"
             exit 0

@@ -77,7 +77,7 @@ func (h *SystemHandler) PerformUpdate(c *gin.Context) {
 			"message":        result.Message,
 			"need_restart":   result.NeedRestart,
 			"deploy_run_url": result.DeployRunURL,
-			"operation_id": lock.OperationID(),
+			"operation_id":   lock.OperationID(),
 		}, nil
 	})
 }
