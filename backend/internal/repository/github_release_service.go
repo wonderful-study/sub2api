@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	neturl "net/url"
 	"net/http"
 	"os"
 	"strings"
@@ -67,6 +68,10 @@ func (c *githubReleaseClientError) FetchLatestRelease(ctx context.Context, repo 
 	return nil, c.err
 }
 
+func (c *githubReleaseClientError) FetchReleaseByTag(ctx context.Context, repo, tag string) (*service.GitHubRelease, error) {
+	return nil, c.err
+}
+
 func (c *githubReleaseClientError) DownloadFile(ctx context.Context, url, dest string, maxSize int64) error {
 	return c.err
 }
@@ -75,9 +80,21 @@ func (c *githubReleaseClientError) FetchChecksumFile(ctx context.Context, url st
 	return nil, c.err
 }
 
+func (c *githubReleaseClientError) DispatchWorkflow(ctx context.Context, repo, workflowID, ref, token string, inputs map[string]string) (string, error) {
+	return "", c.err
+}
+
 func (c *githubReleaseClient) FetchLatestRelease(ctx context.Context, repo string) (*service.GitHubRelease, error) {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo)
+	return c.fetchRelease(ctx, url)
+}
 
+func (c *githubReleaseClient) FetchReleaseByTag(ctx context.Context, repo, tag string) (*service.GitHubRelease, error) {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/tags/%s", repo, urlPathEscape(tag))
+	return c.fetchRelease(ctx, url)
+}
+
+func (c *githubReleaseClient) fetchRelease(ctx context.Context, url string) (*service.GitHubRelease, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -101,6 +118,53 @@ func (c *githubReleaseClient) FetchLatestRelease(ctx context.Context, repo strin
 	}
 
 	return &release, nil
+}
+
+func (c *githubReleaseClient) DispatchWorkflow(ctx context.Context, repo, workflowID, ref, token string, inputs map[string]string) (string, error) {
+	if strings.TrimSpace(token) == "" {
+		return "", fmt.Errorf("GitHub token is required")
+	}
+	if strings.TrimSpace(ref) == "" {
+		ref = "main"
+	}
+
+	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/actions/workflows/%s/dispatches", repo, urlPathEscape(workflowID))
+	body := struct {
+		Ref    string            `json:"ref"`
+		Inputs map[string]string `json:"inputs,omitempty"`
+	}{
+		Ref:    ref,
+		Inputs: inputs,
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, strings.NewReader(string(payload)))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "Sub2API-Updater")
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return "", fmt.Errorf("GitHub workflow dispatch returned %d", resp.StatusCode)
+	}
+
+	return fmt.Sprintf("https://github.com/%s/actions/workflows/%s", repo, workflowID), nil
+}
+
+func urlPathEscape(value string) string {
+	return neturl.PathEscape(strings.TrimSpace(value))
 }
 
 func (c *githubReleaseClient) DownloadFile(ctx context.Context, url, dest string, maxSize int64) error {

@@ -66,15 +66,17 @@ func (h *SystemHandler) PerformUpdate(c *gin.Context) {
 			release(releaseReason, succeeded)
 		}()
 
-		if err := h.updateSvc.PerformUpdate(ctx); err != nil {
+		result, err := h.updateSvc.PerformUpdate(ctx)
+		if err != nil {
 			releaseReason = "SYSTEM_UPDATE_FAILED"
 			return nil, err
 		}
 		succeeded = true
 
 		return gin.H{
-			"message":      "Update completed. Please restart the service.",
-			"need_restart": true,
+			"message":        result.Message,
+			"need_restart":   result.NeedRestart,
+			"deploy_run_url": result.DeployRunURL,
 			"operation_id": lock.OperationID(),
 		}, nil
 	})

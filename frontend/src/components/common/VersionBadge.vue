@@ -226,6 +226,42 @@
                 </button>
               </div>
 
+              <!-- Priority 2b: Docker deployment workflow started -->
+              <div v-else-if="updateSuccess && !needRestart" class="space-y-2">
+                <div
+                  class="flex items-center gap-3 rounded-lg border border-green-200 bg-green-50 p-3 dark:border-green-800/50 dark:bg-green-900/20"
+                >
+                  <div
+                    class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/50"
+                  >
+                    <Icon
+                      name="check"
+                      size="sm"
+                      :stroke-width="2"
+                      class="text-green-600 dark:text-green-400"
+                    />
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <p class="text-sm font-medium text-green-700 dark:text-green-300">
+                      {{ t('version.deployStarted') }}
+                    </p>
+                    <p class="text-xs text-green-600/70 dark:text-green-400/70">
+                      {{ t('version.deployStartedHint') }}
+                    </p>
+                  </div>
+                </div>
+                <a
+                  v-if="updateResultUrl"
+                  :href="updateResultUrl"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="flex items-center justify-center gap-1 text-xs text-gray-500 transition-colors hover:text-gray-700 dark:text-dark-400 dark:hover:text-dark-200"
+                >
+                  {{ t('version.viewDeployRun') }}
+                  <Icon name="externalLink" size="xs" :stroke-width="2" />
+                </a>
+              </div>
+
               <!-- Priority 3: Update available for source build - show git pull hint -->
               <div v-else-if="hasUpdate && !isReleaseBuild" class="space-y-2">
                 <a
@@ -286,7 +322,75 @@
                 </div>
               </div>
 
-              <!-- Priority 4: Update available for release build - show update button -->
+              <!-- Priority 4a: Docker update is waiting for the fork release -->
+              <div
+                v-else-if="hasUpdate && isReleaseBuild && isDockerActionsMode && !customReleaseReady"
+                class="space-y-2"
+              >
+                <div
+                  class="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-800/50 dark:bg-amber-900/20"
+                >
+                  <div
+                    class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-900/50"
+                  >
+                    <Icon
+                      name="refresh"
+                      size="sm"
+                      :stroke-width="2"
+                      class="text-amber-600 dark:text-amber-400"
+                    />
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <p class="text-sm font-medium text-amber-700 dark:text-amber-300">
+                      {{ t('version.customReleasePending') }}
+                    </p>
+                    <p class="text-xs text-amber-600/70 dark:text-amber-400/70">
+                      {{ t('version.customReleasePendingHint', { repo: artifactRepo || '-' }) }}
+                    </p>
+                  </div>
+                </div>
+                <a
+                  v-if="syncPrUrl"
+                  :href="syncPrUrl"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="flex items-center justify-center gap-1 text-xs text-gray-500 transition-colors hover:text-gray-700 dark:text-dark-400 dark:hover:text-dark-200"
+                >
+                  {{ t('version.viewSyncPR') }}
+                  <Icon name="externalLink" size="xs" :stroke-width="2" />
+                </a>
+              </div>
+
+              <!-- Priority 4b: Docker deploy trigger is not configured -->
+              <div
+                v-else-if="hasUpdate && isReleaseBuild && isDockerActionsMode && !deployConfigured"
+                class="space-y-2"
+              >
+                <div
+                  class="flex items-center gap-3 rounded-lg border border-red-200 bg-red-50 p-3 dark:border-red-800/50 dark:bg-red-900/20"
+                >
+                  <div
+                    class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-red-100 dark:bg-red-900/50"
+                  >
+                    <Icon
+                      name="x"
+                      size="sm"
+                      :stroke-width="2"
+                      class="text-red-600 dark:text-red-400"
+                    />
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <p class="text-sm font-medium text-red-700 dark:text-red-300">
+                      {{ t('version.deployNotConfigured') }}
+                    </p>
+                    <p class="text-xs text-red-600/70 dark:text-red-400/70">
+                      {{ t('version.deployNotConfiguredHint') }}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Priority 4c: Update available for release build - show update button -->
               <div v-else-if="hasUpdate && isReleaseBuild" class="space-y-2">
                 <!-- Update info card -->
                 <div
@@ -334,7 +438,7 @@
                     ></path>
                   </svg>
                   <Icon v-else name="download" size="sm" :stroke-width="2" />
-                  {{ updating ? t('version.updating') : t('version.updateNow') }}
+                  {{ updating ? t('version.updating') : updateButtonText }}
                 </button>
 
                 <!-- View release link -->
@@ -408,6 +512,11 @@ const latestVersion = computed(() => appStore.latestVersion)
 const hasUpdate = computed(() => appStore.hasUpdate)
 const releaseInfo = computed(() => appStore.releaseInfo)
 const buildType = computed(() => appStore.buildType)
+const customReleaseReady = computed(() => appStore.customReleaseReady)
+const deployConfigured = computed(() => appStore.deployConfigured)
+const artifactRepo = computed(() => appStore.artifactRepo)
+const updateMode = computed(() => appStore.updateMode)
+const syncPrUrl = computed(() => appStore.syncPrUrl)
 
 // Update process states (local to this component)
 const updating = ref(false)
@@ -416,9 +525,14 @@ const needRestart = ref(false)
 const updateError = ref('')
 const updateSuccess = ref(false)
 const restartCountdown = ref(0)
+const updateResultUrl = ref('')
 
 // Only show update check for release builds (binary/docker deployment)
 const isReleaseBuild = computed(() => buildType.value === 'release')
+const isDockerActionsMode = computed(() => updateMode.value === 'github_actions_docker')
+const updateButtonText = computed(() =>
+  isDockerActionsMode.value ? t('version.deployNow') : t('version.updateNow')
+)
 
 function toggleDropdown() {
   dropdownOpen.value = !dropdownOpen.value
@@ -435,6 +549,7 @@ async function refreshVersion(force = true) {
   updateError.value = ''
   updateSuccess.value = false
   needRestart.value = false
+  updateResultUrl.value = ''
 
   await appStore.fetchVersion(force)
 }
@@ -450,6 +565,7 @@ async function handleUpdate() {
     const result = await performUpdate()
     updateSuccess.value = true
     needRestart.value = result.need_restart
+    updateResultUrl.value = result.deploy_run_url || ''
     // Clear version cache to reflect update completed
     appStore.clearVersionCache()
   } catch (error: unknown) {

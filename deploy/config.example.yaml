@@ -1059,3 +1059,19 @@ update:
   # Leave empty for direct connection (recommended for overseas servers)
   # 留空表示直连（适用于海外服务器）
   proxy_url: ""
+  # Repository used for upstream update notifications.
+  # 用于检测上游更新提示的仓库。
+  notice_repo: "Wei-Shaw/sub2api"
+  # Repository that publishes the actual artifacts to deploy.
+  # 用于发布实际更新产物的仓库；留空时使用 notice_repo。
+  artifact_repo: "wonderful-study/sub2api"
+  # Update mode: binary, github_actions_docker, disabled.
+  # 更新模式：binary（二进制替换）、github_actions_docker（触发部署 workflow）、disabled（禁用）。
+  mode: "github_actions_docker"
+  # GitHub Actions workflow dispatch settings for Docker deployment.
+  # Docker 部署模式下触发的 GitHub Actions workflow。
+  deploy_workflow: "deploy-production.yml"
+  deploy_ref: "main"
+  # Fine-grained token with Actions write permission on artifact_repo.
+  # 需要 artifact_repo 的 Actions write 权限。
+  deploy_github_token: ""
