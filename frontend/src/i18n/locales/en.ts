@@ -872,6 +872,8 @@ export default {
     cacheTtlOverridden1h: 'Billed as 1h',
     totalRequests: 'Total Requests',
     totalTokens: 'Total Tokens',
+    cacheRatio: 'Cache Ratio',
+    cacheTokens: 'Cache Tokens',
     totalCost: 'Total Cost',
     standardCost: 'Standard',
     actualCost: 'Actual',
@@ -2853,8 +2855,10 @@ export default {
         disableScheduling: 'Disable Scheduling',
         resetStatus: 'Reset Status',
         refreshToken: 'Refresh Token',
+        testConnection: 'Batch Test Connection',
         resetStatusSuccess: 'Successfully reset {count} account(s) status',
         refreshTokenSuccess: 'Successfully refreshed {count} account(s) token',
+        testConnectionSuccess: 'Successfully tested {count} account(s)',
         partialSuccess: 'Partially completed: {success} succeeded, {failed} failed'
       },
       bulkEdit: {

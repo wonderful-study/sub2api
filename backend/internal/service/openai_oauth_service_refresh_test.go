@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/imroc/req/v3"
 	"github.com/stretchr/testify/require"
 )
 
@@ -32,6 +33,11 @@ func (s *openaiOAuthClientRefreshStub) RefreshTokenWithClientID(ctx context.Cont
 func TestOpenAIOAuthService_RefreshAccountToken_NoRefreshTokenUsesExistingAccessToken(t *testing.T) {
 	client := &openaiOAuthClientRefreshStub{}
 	svc := NewOpenAIOAuthService(nil, client)
+	var metadataCalls int32
+	svc.SetPrivacyClientFactory(func(proxyURL string) (*req.Client, error) {
+		atomic.AddInt32(&metadataCalls, 1)
+		return nil, errors.New("factory failed")
+	})
 
 	expiresAt := time.Now().Add(30 * time.Minute).UTC().Format(time.RFC3339)
 	account := &Account{
@@ -51,4 +57,21 @@ func TestOpenAIOAuthService_RefreshAccountToken_NoRefreshTokenUsesExistingAccess
 	require.Equal(t, "existing-access-token", info.AccessToken)
 	require.Equal(t, "client-id-1", info.ClientID)
 	require.Zero(t, atomic.LoadInt32(&client.refreshCalls), "existing access token should be reused without calling refresh")
+	require.NotZero(t, atomic.LoadInt32(&metadataCalls), "existing access token should still refresh account metadata")
+}
+
+func TestOpenAIOAuthService_BuildAccountCredentials_FreeClearsSubscriptionExpiry(t *testing.T) {
+	svc := NewOpenAIOAuthService(nil, nil)
+
+	creds := svc.BuildAccountCredentials(&OpenAITokenInfo{
+		AccessToken:                  "access-token",
+		ExpiresAt:                    time.Now().Add(time.Hour).Unix(),
+		PlanType:                     "free",
+		SubscriptionExpiresAt:        "2026-05-10T00:00:00Z",
+		SubscriptionExpiresAtChecked: true,
+	})
+
+	require.Equal(t, "free", creds["plan_type"])
+	require.Contains(t, creds, "subscription_expires_at")
+	require.Equal(t, "", creds["subscription_expires_at"])
 }

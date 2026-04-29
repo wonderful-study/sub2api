@@ -2,7 +2,7 @@
   <AppLayout>
     <TablePageLayout>
       <template #actions>
-        <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div class="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-5">
           <!-- Total Requests -->
           <div class="card p-4">
           <div class="flex items-center gap-3">
@@ -39,6 +39,27 @@
               <p class="text-xs text-gray-500 dark:text-gray-400">
                 {{ t('usage.in') }}: {{ formatTokens(usageStats?.total_input_tokens || 0) }} /
                 {{ t('usage.out') }}: {{ formatTokens(usageStats?.total_output_tokens || 0) }}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Cache Ratio -->
+        <div class="card p-4">
+          <div class="flex items-center gap-3">
+            <div class="rounded-lg bg-cyan-100 p-2 dark:bg-cyan-900/30">
+              <Icon name="inbox" size="md" class="text-cyan-600 dark:text-cyan-400" />
+            </div>
+            <div>
+              <p class="text-xs font-medium text-gray-500 dark:text-gray-400">
+                {{ t('usage.cacheRatio') }}
+              </p>
+              <p class="text-xl font-bold text-cyan-600 dark:text-cyan-400">
+                {{ totalCacheRatio }}
+              </p>
+              <p class="text-xs text-gray-500 dark:text-gray-400">
+                {{ t('usage.cacheTokens') }}:
+                {{ formatTokens(usageStats?.total_cache_tokens || 0) }}
               </p>
             </div>
           </div>
@@ -275,6 +296,12 @@
                 </div>
               </div>
             </div>
+          </template>
+
+          <template #cell-cache_ratio="{ row }">
+            <span class="text-sm font-medium text-cyan-600 dark:text-cyan-400">
+              {{ formatUsageLogCacheRatio(row) }}
+            </span>
           </template>
 
           <template #cell-cost="{ row }">
@@ -552,6 +579,7 @@ const columns = computed<Column[]>(() => [
   { key: 'stream', label: t('usage.type'), sortable: false },
   { key: 'billing_mode', label: t('admin.usage.billingMode'), sortable: false },
   { key: 'tokens', label: t('usage.tokens'), sortable: false },
+  { key: 'cache_ratio', label: t('usage.cacheRatio'), sortable: false },
   { key: 'cost', label: t('usage.cost'), sortable: false },
   { key: 'first_token', label: t('usage.firstToken'), sortable: false },
   { key: 'duration', label: t('usage.duration'), sortable: false },
@@ -669,6 +697,31 @@ const formatTokens = (value: number): string => {
   }
   return value.toLocaleString()
 }
+
+const formatCacheRatio = (cacheTokens: number, totalTokens: number): string => {
+  if (totalTokens <= 0) return '-'
+  return `${((cacheTokens / totalTokens) * 100).toFixed(1)}%`
+}
+
+const getUsageLogTotalTokens = (log: UsageLog): number => {
+  return (
+    (log.input_tokens || 0) +
+    (log.output_tokens || 0) +
+    (log.cache_creation_tokens || 0) +
+    (log.cache_read_tokens || 0)
+  )
+}
+
+const formatUsageLogCacheRatio = (log: UsageLog): string => {
+  return formatCacheRatio(
+    (log.cache_creation_tokens || 0) + (log.cache_read_tokens || 0),
+    getUsageLogTotalTokens(log)
+  )
+}
+
+const totalCacheRatio = computed(() =>
+  formatCacheRatio(usageStats.value?.total_cache_tokens || 0, usageStats.value?.total_tokens || 0)
+)
 
 type UsageTableQueryParams = UsageQueryParams & {
   sort_by?: string

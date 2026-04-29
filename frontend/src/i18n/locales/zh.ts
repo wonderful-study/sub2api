@@ -876,6 +876,8 @@ export default {
     cacheTtlOverridden1h: '按 1h 计费',
     totalRequests: '总请求数',
     totalTokens: '总 Token',
+    cacheRatio: '缓存比例',
+    cacheTokens: '缓存 Token',
     totalCost: '总消费',
     standardCost: '标准',
     actualCost: '实际',
@@ -3000,8 +3002,10 @@ export default {
         disableScheduling: '批量停止调度',
         resetStatus: '批量重置状态',
         refreshToken: '批量刷新令牌',
+        testConnection: '批量测试连接',
         resetStatusSuccess: '已成功重置 {count} 个账号状态',
         refreshTokenSuccess: '已成功刷新 {count} 个账号令牌',
+        testConnectionSuccess: '已成功测试 {count} 个账号',
         partialSuccess: '操作部分完成：{success} 成功，{failed} 失败'
       },
       bulkEdit: {

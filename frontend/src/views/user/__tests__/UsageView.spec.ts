@@ -36,6 +36,8 @@ const messages: Record<string, string> = {
   'usage.reasoningEffort': 'Reasoning Effort',
   'usage.type': 'Type',
   'usage.tokens': 'Tokens',
+  'usage.cacheRatio': 'Cache Ratio',
+  'usage.cacheTokens': 'Cache Tokens',
   'usage.cost': 'Cost',
   'usage.firstToken': 'First Token',
   'usage.duration': 'Duration',
@@ -69,8 +71,72 @@ vi.mock('vue-i18n', async () => {
 
 const AppLayoutStub = { template: '<div><slot /></div>' }
 const TablePageLayoutStub = {
-  template: '<div><slot name="actions" /><slot name="filters" /><slot /></div>',
+  template: `
+    <div>
+      <slot name="actions" />
+      <slot name="filters" />
+      <slot name="table" />
+      <slot name="pagination" />
+      <slot />
+    </div>
+  `,
 }
+const DataTableStub = {
+  props: ['columns', 'data'],
+  template: `
+    <div data-test="data-table">
+      <div data-test="headers">
+        <span v-for="column in columns" :key="column.key" :data-header-key="column.key">
+          {{ column.label }}
+        </span>
+      </div>
+      <div v-for="row in data" :key="row.request_id" data-test="row">
+        <div v-for="column in columns" :key="column.key" :data-cell="column.key">
+          <slot :name="\`cell-\${column.key}\`" :row="row" :value="row[column.key]">
+            {{ column.formatter ? column.formatter(row[column.key], row) : row[column.key] }}
+          </slot>
+        </div>
+      </div>
+    </div>
+  `,
+}
+
+const makeUsageLog = (overrides: Record<string, unknown> = {}) => ({
+  id: 1,
+  user_id: 1,
+  api_key_id: 1,
+  account_id: null,
+  request_id: 'req-user',
+  model: 'gpt-5.5',
+  reasoning_effort: null,
+  inbound_endpoint: '/responses',
+  group_id: null,
+  subscription_id: null,
+  input_tokens: 0,
+  output_tokens: 0,
+  cache_creation_tokens: 0,
+  cache_read_tokens: 0,
+  cache_creation_5m_tokens: 0,
+  cache_creation_1h_tokens: 0,
+  input_cost: 0,
+  output_cost: 0,
+  cache_creation_cost: 0,
+  cache_read_cost: 0,
+  total_cost: 0,
+  actual_cost: 0,
+  rate_multiplier: 1,
+  billing_type: 1,
+  stream: false,
+  duration_ms: 0,
+  first_token_ms: null,
+  image_count: 0,
+  image_size: null,
+  user_agent: null,
+  cache_ttl_overridden: false,
+  billing_mode: 'token',
+  created_at: '2026-03-08T00:00:00Z',
+  ...overrides,
+})
 
 describe('user UsageView tooltip', () => {
   beforeEach(() => {
@@ -142,6 +208,7 @@ describe('user UsageView tooltip', () => {
         stubs: {
           AppLayout: AppLayoutStub,
           TablePageLayout: TablePageLayoutStub,
+          DataTable: DataTableStub,
           Pagination: true,
           EmptyState: true,
           Select: true,
@@ -181,6 +248,115 @@ describe('user UsageView tooltip', () => {
     expect(text).toContain('$0.092883')
     expect(text).toContain('$5.0000 / 1M tokens')
     expect(text).toContain('$30.0000 / 1M tokens')
+  })
+
+  it('shows total cache ratio from filtered usage stats', async () => {
+    query.mockResolvedValue({
+      items: [],
+      total: 0,
+      pages: 0,
+    })
+    getStatsByDateRange.mockResolvedValue({
+      total_requests: 4,
+      total_input_tokens: 50,
+      total_output_tokens: 25,
+      total_cache_tokens: 25,
+      total_tokens: 100,
+      total_cost: 0.1,
+      total_actual_cost: 0.08,
+      average_duration_ms: 1,
+    })
+    list.mockResolvedValue({ items: [] })
+
+    const wrapper = mount(UsageView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          TablePageLayout: TablePageLayoutStub,
+          DataTable: DataTableStub,
+          Pagination: true,
+          EmptyState: true,
+          Select: true,
+          DateRangePicker: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    await flushPromises()
+    await nextTick()
+
+    const text = wrapper.text()
+    expect(text).toContain('Cache Ratio')
+    expect(text).toContain('25.0%')
+    expect(text).toContain('Cache Tokens: 25')
+  })
+
+  it('places cache ratio after tokens and formats row cache ratios', async () => {
+    query.mockResolvedValue({
+      items: [
+        makeUsageLog({
+          request_id: 'req-with-cache',
+          input_tokens: 40,
+          output_tokens: 10,
+          cache_creation_tokens: 20,
+          cache_read_tokens: 30,
+        }),
+        makeUsageLog({
+          id: 2,
+          request_id: 'req-without-cache',
+          input_tokens: 80,
+          output_tokens: 20,
+        }),
+        makeUsageLog({
+          id: 3,
+          request_id: 'req-zero-total',
+        }),
+      ],
+      total: 3,
+      pages: 1,
+    })
+    getStatsByDateRange.mockResolvedValue({
+      total_requests: 3,
+      total_input_tokens: 120,
+      total_output_tokens: 30,
+      total_cache_tokens: 50,
+      total_tokens: 200,
+      total_cost: 0.1,
+      total_actual_cost: 0.08,
+      average_duration_ms: 1,
+    })
+    list.mockResolvedValue({ items: [] })
+
+    const wrapper = mount(UsageView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          TablePageLayout: TablePageLayoutStub,
+          DataTable: DataTableStub,
+          Pagination: true,
+          EmptyState: true,
+          Select: true,
+          DateRangePicker: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    await flushPromises()
+    await nextTick()
+
+    const headerKeys = wrapper
+      .findAll('[data-header-key]')
+      .map((header) => header.attributes('data-header-key'))
+    const tokenIndex = headerKeys.indexOf('tokens')
+    expect(headerKeys.slice(tokenIndex, tokenIndex + 3)).toEqual(['tokens', 'cache_ratio', 'cost'])
+    expect(wrapper.find('[data-header-key="cache_ratio"]').text()).toBe('Cache Ratio')
+
+    const ratios = wrapper.findAll('[data-cell="cache_ratio"]').map((cell) => cell.text())
+    expect(ratios).toEqual(['50.0%', '0.0%', '-'])
   })
 
   it('exports csv with input and output unit price columns', async () => {
@@ -240,6 +416,7 @@ describe('user UsageView tooltip', () => {
         stubs: {
           AppLayout: AppLayoutStub,
           TablePageLayout: TablePageLayoutStub,
+          DataTable: DataTableStub,
           Pagination: true,
           EmptyState: true,
           Select: true,
