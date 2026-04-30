@@ -1,6 +1,31 @@
 name: Deploy Production
 
 on:
+  workflow_call:
+    inputs:
+      image_tag:
+        description: 'Docker image tag to deploy, for example 0.1.120'
+        required: true
+        type: string
+      version:
+        description: 'Release tag that requested this deploy'
+        required: false
+        type: string
+      compose_dir:
+        description: 'Directory on the server containing docker-compose.yml and .env'
+        required: false
+        default: '/root/deploy'
+        type: string
+      compose_file:
+        description: 'Compose file name'
+        required: false
+        default: 'docker-compose.yml'
+        type: string
+      service:
+        description: 'Compose service to recreate'
+        required: false
+        default: 'sub2api'
+        type: string
   workflow_dispatch:
     inputs:
       image_tag:
@@ -29,6 +54,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
 
 jobs:
   deploy:
