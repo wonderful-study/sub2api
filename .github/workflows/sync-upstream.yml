@@ -30,6 +30,7 @@ jobs:
       UPSTREAM_REPO: ${{ github.event.inputs.upstream_repo || 'Wei-Shaw/sub2api' }}
       REQUESTED_TAG: ${{ github.event.inputs.upstream_tag || '' }}
       BASE_BRANCH: ${{ github.event.inputs.base_branch || 'main' }}
+      GH_REPO: ${{ github.repository }}
     steps:
       - name: Checkout fork
         uses: actions/checkout@v6
