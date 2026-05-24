@@ -79,6 +79,12 @@ jobs:
             echo "noop=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          # Keep fork-owned workflow definitions; the default Actions token cannot
+          # push upstream workflow file changes into this repository.
+          if git ls-tree -d --name-only "origin/${BASE_BRANCH}" .github/workflows | grep -q '^.github/workflows$'; then
+            git rm -r --quiet --ignore-unmatch .github/workflows
+            git checkout "origin/${BASE_BRANCH}" -- .github/workflows
+          fi
           if git diff --quiet "origin/${BASE_BRANCH}..HEAD"; then
             echo "No upstream changes to sync"
             echo "noop=true" >> "$GITHUB_OUTPUT"
