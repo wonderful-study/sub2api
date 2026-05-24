@@ -1,0 +1,124 @@
+name: Sync Upstream
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      upstream_repo:
+        description: 'Upstream repository to sync from'
+        required: false
+        default: 'Wei-Shaw/sub2api'
+      upstream_tag:
+        description: 'Upstream tag to sync; empty means latest release'
+        required: false
+        default: ''
+      base_branch:
+        description: 'Fork branch that receives upstream changes'
+        required: false
+        default: 'main'
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      UPSTREAM_REPO: ${{ github.event.inputs.upstream_repo || 'Wei-Shaw/sub2api' }}
+      REQUESTED_TAG: ${{ github.event.inputs.upstream_tag || '' }}
+      BASE_BRANCH: ${{ github.event.inputs.base_branch || 'main' }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ env.BASE_BRANCH }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Resolve upstream tag
+        id: upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -n "$REQUESTED_TAG" ]; then
+            TAG="$REQUESTED_TAG"
+          else
+            TAG="$(gh release view --repo "$UPSTREAM_REPO" --json tagName --jq '.tagName')"
+          fi
+          if [ -z "$TAG" ]; then
+            echo "No upstream tag found" >&2
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "branch=sync/upstream-${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Merge upstream tag
+        id: merge
+        env:
+          TAG: ${{ steps.upstream.outputs.tag }}
+        run: |
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
+          git fetch upstream --tags --force
+          git checkout -B "${{ steps.upstream.outputs.branch }}" "origin/${BASE_BRANCH}"
+          set +e
+          git merge --no-edit "refs/tags/${TAG}"
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            git merge --abort || true
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+            echo "noop=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --quiet "origin/${BASE_BRANCH}..HEAD"; then
+            echo "No upstream changes to sync"
+            echo "noop=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "noop=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "conflict=false" >> "$GITHUB_OUTPUT"
+
+      - name: Create conflict issue
+        if: steps.merge.outputs.conflict == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.upstream.outputs.tag }}
+        run: |
+          title="Manual upstream sync required: ${TAG}"
+          existing="$(gh issue list --state open --search "${title} in:title" --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            echo "Existing conflict issue: #${existing}"
+            exit 0
+          fi
+          gh issue create \
+            --title "$title" \
+            --body "Automatic merge of ${UPSTREAM_REPO}@${TAG} into ${BASE_BRANCH} hit conflicts. Resolve locally, push to ${BASE_BRANCH}, then create release tag ${TAG}."
+          exit 1
+
+      - name: Push sync branch
+        if: steps.merge.outputs.conflict == 'false' && steps.merge.outputs.noop == 'false'
+        run: |
+          git push --force-with-lease origin "${{ steps.upstream.outputs.branch }}"
+
+      - name: Open or update pull request
+        if: steps.merge.outputs.conflict == 'false' && steps.merge.outputs.noop == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.upstream.outputs.tag }}
+          BRANCH: ${{ steps.upstream.outputs.branch }}
+        run: |
+          existing="$(gh pr list --state open --head "$BRANCH" --json number --jq '.[0].number // empty')"
+          body="Merges upstream ${UPSTREAM_REPO}@${TAG} into ${BASE_BRANCH}. After this PR is merged, release-on-version will create tag ${TAG} and the release workflow will publish this fork's artifacts."
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --title "sync: upstream ${TAG}" --body "$body"
+          else
+            gh pr create --base "$BASE_BRANCH" --head "$BRANCH" --title "sync: upstream ${TAG}" --body "$body"
+          fi

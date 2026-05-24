@@ -1,0 +1,103 @@
+name: Deploy Production
+
+on:
+  workflow_call:
+    inputs:
+      image_tag:
+        description: 'Docker image tag to deploy, for example 0.1.120'
+        required: true
+        type: string
+      version:
+        description: 'Release tag that requested this deploy'
+        required: false
+        type: string
+      compose_dir:
+        description: 'Directory on the server containing docker-compose.yml and .env'
+        required: false
+        default: '/root/deploy'
+        type: string
+      compose_file:
+        description: 'Compose file name'
+        required: false
+        default: 'docker-compose.yml'
+        type: string
+      service:
+        description: 'Compose service to recreate'
+        required: false
+        default: 'sub2api'
+        type: string
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Docker image tag to deploy, for example 0.1.120'
+        required: true
+        type: string
+      version:
+        description: 'Release tag that requested this deploy'
+        required: false
+        type: string
+      compose_dir:
+        description: 'Directory on the server containing docker-compose.yml and .env'
+        required: false
+        default: '/root/deploy'
+        type: string
+      compose_file:
+        description: 'Compose file name'
+        required: false
+        default: 'docker-compose.yml'
+        type: string
+      service:
+        description: 'Compose service to recreate'
+        required: false
+        default: 'sub2api'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ vars.DEPLOY_SSH_HOST || '23.251.34.211' }}
+          username: ${{ vars.DEPLOY_SSH_USER || secrets.DEPLOY_SSH_USER || 'root' }}
+          key: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          port: ${{ vars.DEPLOY_SSH_PORT || secrets.DEPLOY_SSH_PORT || 22 }}
+          script: |
+            set -euo pipefail
+
+            COMPOSE_DIR='${{ inputs.compose_dir }}'
+            COMPOSE_FILE='${{ inputs.compose_file }}'
+            SERVICE='${{ inputs.service }}'
+            IMAGE_TAG='${{ inputs.image_tag }}'
+
+            cd "$COMPOSE_DIR"
+            touch .env
+
+            if grep -q '^SUB2API_IMAGE_TAG=' .env; then
+              sed -i.bak "s|^SUB2API_IMAGE_TAG=.*|SUB2API_IMAGE_TAG=${IMAGE_TAG}|" .env
+            else
+              printf '\nSUB2API_IMAGE_TAG=%s\n' "$IMAGE_TAG" >> .env
+            fi
+
+            if docker compose version >/dev/null 2>&1; then
+              COMPOSE='docker compose'
+            else
+              COMPOSE='docker-compose'
+            fi
+
+            if [ -n '${{ secrets.GHCR_USERNAME }}' ] && [ -n '${{ secrets.GHCR_TOKEN }}' ]; then
+              echo '${{ secrets.GHCR_TOKEN }}' | docker login ghcr.io -u '${{ secrets.GHCR_USERNAME }}' --password-stdin
+            fi
+
+            $COMPOSE -f "$COMPOSE_FILE" pull "$SERVICE"
+            $COMPOSE -f "$COMPOSE_FILE" up -d "$SERVICE"
+            $COMPOSE -f "$COMPOSE_FILE" ps "$SERVICE"
+            docker image prune -f

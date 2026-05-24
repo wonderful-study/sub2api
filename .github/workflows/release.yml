@@ -15,6 +15,11 @@ on:
         required: false
         type: boolean
         default: false
+      auto_deploy:
+        description: 'Deploy production after publishing the release'
+        required: false
+        type: boolean
+        default: true
 
 # 环境变量：合并 workflow_dispatch 输入和 repository variable
 # tag push 触发时读取 vars.SIMPLE_RELEASE，workflow_dispatch 时使用输入参数
@@ -26,8 +31,35 @@ permissions:
   packages: write
 
 jobs:
+  resolve-release:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Resolve release metadata
+        id: release
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+
+          if [ -z "$TAG" ]; then
+            echo "Release tag is empty" >&2
+            exit 1
+          fi
+
+          TAG="v${TAG#v}"
+          VERSION="${TAG#v}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
   # Update VERSION file with tag version
   update-version:
+    needs: [resolve-release]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -35,12 +67,7 @@ jobs:
 
       - name: Update VERSION file
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION=${{ github.event.inputs.tag }}
-            VERSION=${VERSION#v}
-          else
-            VERSION=${GITHUB_REF#refs/tags/v}
-          fi
+          VERSION="${{ needs.resolve-release.outputs.version }}"
           echo "$VERSION" > backend/cmd/server/VERSION
           echo "Updated VERSION file to: $VERSION"
 
@@ -85,14 +112,14 @@ jobs:
           retention-days: 1
 
   release:
-    needs: [update-version, build-frontend]
+    needs: [resolve-release, update-version, build-frontend]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ needs.resolve-release.outputs.tag }}
 
       - name: Download VERSION artifact
         uses: actions/download-artifact@v8
@@ -148,11 +175,7 @@ jobs:
       - name: Get tag message
         id: tag_message
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG_NAME=${{ github.event.inputs.tag }}
-          else
-            TAG_NAME=${GITHUB_REF#refs/tags/}
-          fi
+          TAG_NAME="${{ needs.resolve-release.outputs.tag }}"
           echo "Processing tag: $TAG_NAME"
 
           # 获取完整的 tag message（跳过第一行标题）
@@ -213,12 +236,8 @@ jobs:
             exit 0
           fi
 
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG_NAME=${{ github.event.inputs.tag }}
-          else
-            TAG_NAME=${GITHUB_REF#refs/tags/}
-          fi
-          VERSION=${TAG_NAME#v}
+          TAG_NAME="${{ needs.resolve-release.outputs.tag }}"
+          VERSION="${{ needs.resolve-release.outputs.version }}"
           REPO="${{ github.repository }}"
           GHCR_IMAGE="ghcr.io/${REPO,,}"  # ${,,} converts to lowercase
 
@@ -273,7 +292,7 @@ jobs:
               }')"
 
   sync-version-file:
-    needs: [release]
+    needs: [resolve-release, release]
     if: ${{ needs.release.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
@@ -284,12 +303,7 @@ jobs:
 
       - name: Sync VERSION file to released tag
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION=${{ github.event.inputs.tag }}
-            VERSION=${VERSION#v}
-          else
-            VERSION=${GITHUB_REF#refs/tags/v}
-          fi
+          VERSION="${{ needs.resolve-release.outputs.version }}"
 
           CURRENT_VERSION=$(tr -d '\r\n' < backend/cmd/server/VERSION || true)
           if [ "$CURRENT_VERSION" = "$VERSION" ]; then
@@ -304,3 +318,12 @@ jobs:
           git add backend/cmd/server/VERSION
           git commit -m "chore: sync VERSION to ${VERSION} [skip ci]"
           git push origin HEAD:${{ github.event.repository.default_branch }}
+
+  auto-deploy:
+    needs: [resolve-release, release]
+    if: ${{ needs.release.result == 'success' && github.event.inputs.auto_deploy != 'false' && vars.AUTO_DEPLOY_ON_RELEASE != 'false' }}
+    uses: ./.github/workflows/deploy-production.yml
+    with:
+      image_tag: ${{ needs.resolve-release.outputs.version }}
+      version: ${{ needs.resolve-release.outputs.tag }}
+    secrets: inherit
