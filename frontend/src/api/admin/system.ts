@@ -14,7 +14,16 @@ export interface ReleaseInfo {
 export interface VersionInfo {
   current_version: string
   latest_version: string
+  latest_tag?: string
+  upstream_latest_version?: string
   has_update: boolean
+  custom_release_ready?: boolean
+  deploy_configured?: boolean
+  notice_repo?: string
+  artifact_repo?: string
+  update_mode?: string
+  sync_pr_url?: string
+  deploy_run_url?: string
   release_info?: ReleaseInfo
   cached: boolean
   warning?: string
@@ -43,6 +52,7 @@ export async function checkUpdates(force = false): Promise<VersionInfo> {
 export interface UpdateResult {
   message: string
   need_restart: boolean
+  deploy_run_url?: string
 }
 
 /**

@@ -41,6 +41,13 @@ export const useAppStore = defineStore('app', () => {
   const hasUpdate = ref<boolean>(false)
   const buildType = ref<string>('source')
   const releaseInfo = ref<ReleaseInfo | null>(null)
+  const customReleaseReady = ref<boolean>(true)
+  const deployConfigured = ref<boolean>(true)
+  const noticeRepo = ref<string>('')
+  const artifactRepo = ref<string>('')
+  const updateMode = ref<string>('binary')
+  const syncPrUrl = ref<string>('')
+  const deployRunUrl = ref<string>('')
 
   // Auto-incrementing ID for toasts
   let toastIdCounter = 0
@@ -245,6 +252,13 @@ export const useAppStore = defineStore('app', () => {
         current_version: currentVersion.value,
         latest_version: latestVersion.value,
         has_update: hasUpdate.value,
+        custom_release_ready: customReleaseReady.value,
+        deploy_configured: deployConfigured.value,
+        notice_repo: noticeRepo.value,
+        artifact_repo: artifactRepo.value,
+        update_mode: updateMode.value,
+        sync_pr_url: syncPrUrl.value,
+        deploy_run_url: deployRunUrl.value,
         build_type: buildType.value,
         release_info: releaseInfo.value || undefined,
         cached: true
@@ -264,6 +278,13 @@ export const useAppStore = defineStore('app', () => {
       hasUpdate.value = data.has_update
       buildType.value = data.build_type || 'source'
       releaseInfo.value = data.release_info || null
+      customReleaseReady.value = data.custom_release_ready ?? true
+      deployConfigured.value = data.deploy_configured ?? true
+      noticeRepo.value = data.notice_repo || ''
+      artifactRepo.value = data.artifact_repo || ''
+      updateMode.value = data.update_mode || 'binary'
+      syncPrUrl.value = data.sync_pr_url || ''
+      deployRunUrl.value = data.deploy_run_url || ''
       versionLoaded.value = true
       return data
     } catch (error) {
@@ -428,6 +449,13 @@ export const useAppStore = defineStore('app', () => {
     hasUpdate,
     buildType,
     releaseInfo,
+    customReleaseReady,
+    deployConfigured,
+    noticeRepo,
+    artifactRepo,
+    updateMode,
+    syncPrUrl,
+    deployRunUrl,
 
     // Computed
     hasActiveToasts,

@@ -1,0 +1,16 @@
+# Paths owned by this fork. The upstream sync workflow restores these from the
+# fork base branch before opening a sync PR so upstream updates cannot silently
+# remove local-only features.
+.github/fork-protected-paths.txt
+.github/workflows/
+deploy/MIGRATION_CN.md
+deploy/package-server-bundle.sh
+deploy/run-online-experience-e2e.sh
+online-experience/
+backend/internal/integration/e2e_online_experience_test.go
+backend/internal/onlineexperience/
+backend/internal/service/api_key_internal.go
+backend/internal/service/api_key_online_experience.go
+frontend/src/modules/online-experience/
+frontend/src/utils/accountExpiryDisplay.ts
+frontend/src/utils/__tests__/accountExpiryDisplay.spec.ts

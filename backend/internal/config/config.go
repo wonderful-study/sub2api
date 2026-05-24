@@ -154,6 +154,18 @@ type UpdateConfig struct {
 	// 支持 http/https/socks5/socks5h 协议
 	// 例如: "http://127.0.0.1:7890", "socks5://127.0.0.1:1080"
 	ProxyURL string `mapstructure:"proxy_url"`
+	// NoticeRepo 用于检测上游更新提示。
+	NoticeRepo string `mapstructure:"notice_repo"`
+	// ArtifactRepo 用于下载/部署实际更新产物；留空时使用 NoticeRepo。
+	ArtifactRepo string `mapstructure:"artifact_repo"`
+	// Mode 控制更新执行方式：binary、github_actions_docker、disabled。
+	Mode string `mapstructure:"mode"`
+	// DeployWorkflow 是 Docker 模式下触发的 GitHub Actions workflow 文件名或 ID。
+	DeployWorkflow string `mapstructure:"deploy_workflow"`
+	// DeployRef 是触发部署 workflow 使用的 ref。
+	DeployRef string `mapstructure:"deploy_ref"`
+	// DeployGitHubToken 用于触发部署 workflow 的 GitHub token。
+	DeployGitHubToken string `mapstructure:"deploy_github_token"`
 }
 
 type IdempotencyConfig struct {
@@ -1390,6 +1402,28 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	cfg.Security.ResponseHeaders.ForceRemove = normalizeStringSlice(cfg.Security.ResponseHeaders.ForceRemove)
 	cfg.Security.CSP.Policy = strings.TrimSpace(cfg.Security.CSP.Policy)
 	cfg.SetTrustForwardedIPForAPIKeyACL(cfg.Security.TrustForwardedIPForAPIKeyACL)
+	cfg.Update.ProxyURL = strings.TrimSpace(cfg.Update.ProxyURL)
+	cfg.Update.NoticeRepo = strings.TrimSpace(cfg.Update.NoticeRepo)
+	cfg.Update.ArtifactRepo = strings.TrimSpace(cfg.Update.ArtifactRepo)
+	cfg.Update.Mode = strings.ToLower(strings.TrimSpace(cfg.Update.Mode))
+	cfg.Update.DeployWorkflow = strings.TrimSpace(cfg.Update.DeployWorkflow)
+	cfg.Update.DeployRef = strings.TrimSpace(cfg.Update.DeployRef)
+	cfg.Update.DeployGitHubToken = strings.TrimSpace(cfg.Update.DeployGitHubToken)
+	if cfg.Update.NoticeRepo == "" {
+		cfg.Update.NoticeRepo = "Wei-Shaw/sub2api"
+	}
+	if cfg.Update.ArtifactRepo == "" {
+		cfg.Update.ArtifactRepo = cfg.Update.NoticeRepo
+	}
+	if cfg.Update.Mode == "" {
+		cfg.Update.Mode = "binary"
+	}
+	if cfg.Update.DeployWorkflow == "" {
+		cfg.Update.DeployWorkflow = "deploy-production.yml"
+	}
+	if cfg.Update.DeployRef == "" {
+		cfg.Update.DeployRef = "main"
+	}
 	cfg.Log.Level = strings.ToLower(strings.TrimSpace(cfg.Log.Level))
 	cfg.Log.Format = strings.ToLower(strings.TrimSpace(cfg.Log.Format))
 	cfg.Log.ServiceName = strings.TrimSpace(cfg.Log.ServiceName)
@@ -1486,6 +1520,15 @@ func setDefaults() {
 	viper.SetDefault("server.h2c.max_read_frame_size", 1<<20)              // 1MB（够用）
 	viper.SetDefault("server.h2c.max_upload_buffer_per_connection", 2<<20) // 2MB
 	viper.SetDefault("server.h2c.max_upload_buffer_per_stream", 512<<10)   // 512KB
+
+	// Update
+	viper.SetDefault("update.proxy_url", "")
+	viper.SetDefault("update.notice_repo", "Wei-Shaw/sub2api")
+	viper.SetDefault("update.artifact_repo", "")
+	viper.SetDefault("update.mode", "binary")
+	viper.SetDefault("update.deploy_workflow", "deploy-production.yml")
+	viper.SetDefault("update.deploy_ref", "main")
+	viper.SetDefault("update.deploy_github_token", "")
 
 	// Log
 	viper.SetDefault("log.level", "info")
@@ -1955,6 +1998,11 @@ func (c *Config) Validate() error {
 	}
 	if c.SubscriptionMaintenance.QueueSize < 0 {
 		return fmt.Errorf("subscription_maintenance.queue_size must be non-negative")
+	}
+	switch strings.ToLower(strings.TrimSpace(c.Update.Mode)) {
+	case "", "binary", "github_actions_docker", "disabled":
+	default:
+		return fmt.Errorf("update.mode must be one of: binary/github_actions_docker/disabled")
 	}
 
 	// Gemini OAuth 配置校验：client_id 与 client_secret 必须同时设置或同时留空。

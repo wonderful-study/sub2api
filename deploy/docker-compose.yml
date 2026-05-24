@@ -16,7 +16,7 @@ services:
   # Sub2API Application
   # ===========================================================================
   sub2api:
-    image: weishaw/sub2api:latest
+    image: ${SUB2API_IMAGE:-ghcr.io/wonderful-study/sub2api}:${SUB2API_IMAGE_TAG:-latest}
     container_name: sub2api
     restart: unless-stopped
     ulimits:
@@ -143,6 +143,13 @@ services:
       # Proxy for accessing GitHub (online updates + pricing data)
       # Examples: http://host:port, socks5://host:port
       - UPDATE_PROXY_URL=${UPDATE_PROXY_URL:-}
+      # Check update notices from upstream, but deploy artifacts from your fork.
+      - UPDATE_NOTICE_REPO=${UPDATE_NOTICE_REPO:-Wei-Shaw/sub2api}
+      - UPDATE_ARTIFACT_REPO=${UPDATE_ARTIFACT_REPO:-wonderful-study/sub2api}
+      - UPDATE_MODE=${UPDATE_MODE:-github_actions_docker}
+      - UPDATE_DEPLOY_WORKFLOW=${UPDATE_DEPLOY_WORKFLOW:-deploy-production.yml}
+      - UPDATE_DEPLOY_REF=${UPDATE_DEPLOY_REF:-main}
+      - UPDATE_DEPLOY_GITHUB_TOKEN=${UPDATE_DEPLOY_GITHUB_TOKEN:-}
 
       # =======================================================================
       # Image Generation Stream & Concurrency

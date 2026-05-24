@@ -17,6 +17,10 @@ on:
         description: 'Fork branch that receives upstream changes'
         required: false
         default: 'main'
+      allow_deletions:
+        description: 'Allow upstream sync PR to include file deletions'
+        required: false
+        default: 'false'
 
 permissions:
   actions: write
@@ -31,6 +35,7 @@ jobs:
       UPSTREAM_REPO: ${{ github.event.inputs.upstream_repo || 'Wei-Shaw/sub2api' }}
       REQUESTED_TAG: ${{ github.event.inputs.upstream_tag || '' }}
       BASE_BRANCH: ${{ github.event.inputs.base_branch || 'main' }}
+      ALLOW_DELETIONS: ${{ github.event.inputs.allow_deletions || 'false' }}
       GH_REPO: ${{ github.repository }}
     steps:
       - name: Checkout fork
@@ -76,20 +81,53 @@ jobs:
           if [ "$status" -ne 0 ]; then
             git merge --abort || git reset --merge || git reset --hard "origin/${BASE_BRANCH}" || true
             echo "conflict=true" >> "$GITHUB_OUTPUT"
+            echo "unsafe=false" >> "$GITHUB_OUTPUT"
             echo "noop=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # Keep fork-owned workflow definitions; the default Actions token cannot
-          # push upstream workflow file changes into this repository.
-          if git ls-tree -d --name-only "origin/${BASE_BRANCH}" .github/workflows | grep -q '^.github/workflows$'; then
-            git rm -r -f --quiet --ignore-unmatch .github/workflows
+
+          # Keep fork-owned paths on the fork side of the merge. This protects
+          # local-only features from being removed by an upstream sync PR.
+          protected_file=".github/fork-protected-paths.txt"
+          if git cat-file -e "origin/${BASE_BRANCH}:${protected_file}" 2>/dev/null; then
+            git checkout "origin/${BASE_BRANCH}" -- "$protected_file"
+            while IFS= read -r protected_path; do
+              protected_path="${protected_path%%#*}"
+              protected_path="$(printf '%s' "$protected_path" | xargs)"
+              if [ -z "$protected_path" ]; then
+                continue
+              fi
+              if git cat-file -e "origin/${BASE_BRANCH}:${protected_path%/}" 2>/dev/null; then
+                git checkout "origin/${BASE_BRANCH}" -- "$protected_path"
+              fi
+            done < "$protected_file"
+          elif git ls-tree -d --name-only "origin/${BASE_BRANCH}" .github/workflows | grep -q '^.github/workflows$'; then
             git checkout "origin/${BASE_BRANCH}" -- .github/workflows
           fi
+
+          deleted_paths="$(git diff --cached --name-status --diff-filter=D || true)"
+          if [ -n "$deleted_paths" ] && [ "$ALLOW_DELETIONS" != "true" ]; then
+            echo "Upstream sync would delete files. Refusing automatic sync." >&2
+            echo "$deleted_paths" >&2
+            echo "conflict=false" >> "$GITHUB_OUTPUT"
+            echo "unsafe=true" >> "$GITHUB_OUTPUT"
+            echo "noop=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "deleted_paths<<EOF"
+              echo "$deleted_paths"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+            git reset --hard "origin/${BASE_BRANCH}" || true
+            exit 0
+          fi
+
           if git diff --cached --quiet && git diff --quiet; then
             echo "No upstream changes to sync"
+            echo "unsafe=false" >> "$GITHUB_OUTPUT"
             echo "noop=true" >> "$GITHUB_OUTPUT"
           else
             git commit -m "Merge upstream ${TAG}"
+            echo "unsafe=false" >> "$GITHUB_OUTPUT"
             echo "noop=false" >> "$GITHUB_OUTPUT"
           fi
           echo "conflict=false" >> "$GITHUB_OUTPUT"
@@ -111,13 +149,39 @@ jobs:
             --body "Automatic merge of ${UPSTREAM_REPO}@${TAG} into ${BASE_BRANCH} hit conflicts. Resolve locally, push to ${BASE_BRANCH}, then create release tag ${TAG}."
           exit 1
 
+      - name: Create unsafe sync issue
+        if: steps.merge.outputs.unsafe == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.upstream.outputs.tag }}
+          DELETED_PATHS: ${{ steps.merge.outputs.deleted_paths }}
+        run: |
+          title="Manual upstream sync review required: ${TAG}"
+          existing="$(gh issue list --state open --search "${title} in:title" --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            echo "Existing unsafe sync issue: #${existing}"
+            exit 0
+          fi
+          body="$(cat <<BODY
+          Automatic sync of ${UPSTREAM_REPO}@${TAG} into ${BASE_BRANCH} would delete files. Review these deletions manually, or rerun the workflow with allow_deletions=true if they are expected.
+
+          Deleted paths:
+
+          \`\`\`
+          ${DELETED_PATHS}
+          \`\`\`
+          BODY
+          )"
+          gh issue create --title "$title" --body "$body"
+          exit 1
+
       - name: Push sync branch
-        if: steps.merge.outputs.conflict == 'false' && steps.merge.outputs.noop == 'false'
+        if: steps.merge.outputs.conflict == 'false' && steps.merge.outputs.unsafe != 'true' && steps.merge.outputs.noop == 'false'
         run: |
           git push --force-with-lease origin "${{ steps.upstream.outputs.branch }}"
 
       - name: Open or update pull request
-        if: steps.merge.outputs.conflict == 'false' && steps.merge.outputs.noop == 'false'
+        if: steps.merge.outputs.conflict == 'false' && steps.merge.outputs.unsafe != 'true' && steps.merge.outputs.noop == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.upstream.outputs.tag }}

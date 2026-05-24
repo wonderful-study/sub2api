@@ -20,9 +20,13 @@ import (
 )
 
 const (
-	updateCacheKey = "update_check_cache"
-	updateCacheTTL = 1200 // 20 minutes
-	githubRepo     = "Wei-Shaw/sub2api"
+	updateCacheKey    = "update_check_cache"
+	updateCacheTTL    = 1200 // 20 minutes
+	defaultGitHubRepo = "Wei-Shaw/sub2api"
+
+	UpdateModeBinary              = "binary"
+	UpdateModeGitHubActionsDocker = "github_actions_docker"
+	UpdateModeDisabled            = "disabled"
 
 	// Security: allowed download domains for updates
 	allowedDownloadHost = "github.com"
@@ -41,8 +45,19 @@ type UpdateCache interface {
 // GitHubReleaseClient 获取 GitHub release 信息的接口
 type GitHubReleaseClient interface {
 	FetchLatestRelease(ctx context.Context, repo string) (*GitHubRelease, error)
+	FetchReleaseByTag(ctx context.Context, repo, tag string) (*GitHubRelease, error)
 	DownloadFile(ctx context.Context, url, dest string, maxSize int64) error
 	FetchChecksumFile(ctx context.Context, url string) ([]byte, error)
+	DispatchWorkflow(ctx context.Context, repo, workflowID, ref, token string, inputs map[string]string) (string, error)
+}
+
+type UpdateOptions struct {
+	NoticeRepo        string
+	ArtifactRepo      string
+	Mode              string
+	DeployWorkflow    string
+	DeployRef         string
+	DeployGitHubToken string
 }
 
 // UpdateService handles software updates
@@ -51,27 +66,75 @@ type UpdateService struct {
 	githubClient   GitHubReleaseClient
 	currentVersion string
 	buildType      string // "source" for manual builds, "release" for CI builds
+	noticeRepo     string
+	artifactRepo   string
+	mode           string
+	deployWorkflow string
+	deployRef      string
+	deployToken    string
 }
 
 // NewUpdateService creates a new UpdateService
-func NewUpdateService(cache UpdateCache, githubClient GitHubReleaseClient, version, buildType string) *UpdateService {
+func NewUpdateService(cache UpdateCache, githubClient GitHubReleaseClient, version, buildType string, opts UpdateOptions) *UpdateService {
+	noticeRepo := strings.TrimSpace(opts.NoticeRepo)
+	if noticeRepo == "" {
+		noticeRepo = defaultGitHubRepo
+	}
+	artifactRepo := strings.TrimSpace(opts.ArtifactRepo)
+	if artifactRepo == "" {
+		artifactRepo = noticeRepo
+	}
+	mode := strings.ToLower(strings.TrimSpace(opts.Mode))
+	if mode == "" {
+		mode = UpdateModeBinary
+	}
+	deployWorkflow := strings.TrimSpace(opts.DeployWorkflow)
+	if deployWorkflow == "" {
+		deployWorkflow = "deploy-production.yml"
+	}
+	deployRef := strings.TrimSpace(opts.DeployRef)
+	if deployRef == "" {
+		deployRef = "main"
+	}
+
 	return &UpdateService{
 		cache:          cache,
 		githubClient:   githubClient,
 		currentVersion: version,
 		buildType:      buildType,
+		noticeRepo:     noticeRepo,
+		artifactRepo:   artifactRepo,
+		mode:           mode,
+		deployWorkflow: deployWorkflow,
+		deployRef:      deployRef,
+		deployToken:    strings.TrimSpace(opts.DeployGitHubToken),
 	}
 }
 
 // UpdateInfo contains update information
 type UpdateInfo struct {
-	CurrentVersion string       `json:"current_version"`
-	LatestVersion  string       `json:"latest_version"`
-	HasUpdate      bool         `json:"has_update"`
-	ReleaseInfo    *ReleaseInfo `json:"release_info,omitempty"`
-	Cached         bool         `json:"cached"`
-	Warning        string       `json:"warning,omitempty"`
-	BuildType      string       `json:"build_type"` // "source" or "release"
+	CurrentVersion        string       `json:"current_version"`
+	LatestVersion         string       `json:"latest_version"`
+	LatestTag             string       `json:"latest_tag,omitempty"`
+	UpstreamLatestVersion string       `json:"upstream_latest_version"`
+	HasUpdate             bool         `json:"has_update"`
+	CustomReleaseReady    bool         `json:"custom_release_ready"`
+	DeployConfigured      bool         `json:"deploy_configured"`
+	NoticeRepo            string       `json:"notice_repo"`
+	ArtifactRepo          string       `json:"artifact_repo"`
+	UpdateMode            string       `json:"update_mode"`
+	SyncPRURL             string       `json:"sync_pr_url,omitempty"`
+	DeployRunURL          string       `json:"deploy_run_url,omitempty"`
+	ReleaseInfo           *ReleaseInfo `json:"release_info,omitempty"`
+	Cached                bool         `json:"cached"`
+	Warning               string       `json:"warning,omitempty"`
+	BuildType             string       `json:"build_type"` // "source" or "release"
+}
+
+type SystemUpdateResult struct {
+	Message      string `json:"message"`
+	NeedRestart  bool   `json:"need_restart"`
+	DeployRunURL string `json:"deploy_run_url,omitempty"`
 }
 
 // ReleaseInfo contains GitHub release details
@@ -124,11 +187,18 @@ func (s *UpdateService) CheckUpdate(ctx context.Context, force bool) (*UpdateInf
 			return cached, nil
 		}
 		return &UpdateInfo{
-			CurrentVersion: s.currentVersion,
-			LatestVersion:  s.currentVersion,
-			HasUpdate:      false,
-			Warning:        err.Error(),
-			BuildType:      s.buildType,
+			CurrentVersion:        s.currentVersion,
+			LatestVersion:         s.currentVersion,
+			UpstreamLatestVersion: s.currentVersion,
+			HasUpdate:             false,
+			CustomReleaseReady:    false,
+			DeployConfigured:      s.deployConfigured(),
+			NoticeRepo:            s.noticeRepo,
+			ArtifactRepo:          s.artifactRepo,
+			UpdateMode:            s.mode,
+			SyncPRURL:             s.syncPRURL(),
+			Warning:               err.Error(),
+			BuildType:             s.buildType,
 		}, nil
 	}
 
@@ -139,22 +209,34 @@ func (s *UpdateService) CheckUpdate(ctx context.Context, force bool) (*UpdateInf
 
 // PerformUpdate downloads and applies the update
 // Uses atomic file replacement pattern for safe in-place updates
-func (s *UpdateService) PerformUpdate(ctx context.Context) error {
+func (s *UpdateService) PerformUpdate(ctx context.Context) (*SystemUpdateResult, error) {
 	info, err := s.CheckUpdate(ctx, true)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if !info.HasUpdate {
-		return fmt.Errorf("no update available")
+		return nil, fmt.Errorf("no update available")
+	}
+
+	switch s.mode {
+	case UpdateModeGitHubActionsDocker:
+		return s.performGitHubActionsDockerUpdate(ctx, info)
+	case UpdateModeDisabled:
+		return nil, fmt.Errorf("online update is disabled")
 	}
 
 	// Find matching archive and checksum for current platform
+	release, err := s.githubClient.FetchReleaseByTag(ctx, s.artifactRepo, info.LatestTag)
+	if err != nil {
+		return nil, fmt.Errorf("custom release %s is not ready in %s: %w", info.LatestTag, s.artifactRepo, err)
+	}
+	releaseInfo := convertGitHubRelease(release)
 	archiveName := s.getArchiveName()
 	var downloadURL string
 	var checksumURL string
 
-	for _, asset := range info.ReleaseInfo.Assets {
+	for _, asset := range releaseInfo.Assets {
 		if strings.Contains(asset.Name, archiveName) && !strings.HasSuffix(asset.Name, ".txt") {
 			downloadURL = asset.DownloadURL
 		}
@@ -164,27 +246,27 @@ func (s *UpdateService) PerformUpdate(ctx context.Context) error {
 	}
 
 	if downloadURL == "" {
-		return fmt.Errorf("no compatible release found for %s/%s", runtime.GOOS, runtime.GOARCH)
+		return nil, fmt.Errorf("no compatible release found for %s/%s", runtime.GOOS, runtime.GOARCH)
 	}
 
 	// SECURITY: Validate download URL is from trusted domain
 	if err := validateDownloadURL(downloadURL); err != nil {
-		return fmt.Errorf("invalid download URL: %w", err)
+		return nil, fmt.Errorf("invalid download URL: %w", err)
 	}
 	if checksumURL != "" {
 		if err := validateDownloadURL(checksumURL); err != nil {
-			return fmt.Errorf("invalid checksum URL: %w", err)
+			return nil, fmt.Errorf("invalid checksum URL: %w", err)
 		}
 	}
 
 	// Get current executable path
 	exePath, err := os.Executable()
 	if err != nil {
-		return fmt.Errorf("failed to get executable path: %w", err)
+		return nil, fmt.Errorf("failed to get executable path: %w", err)
 	}
 	exePath, err = filepath.EvalSymlinks(exePath)
 	if err != nil {
-		return fmt.Errorf("failed to resolve symlinks: %w", err)
+		return nil, fmt.Errorf("failed to resolve symlinks: %w", err)
 	}
 
 	exeDir := filepath.Dir(exePath)
@@ -193,32 +275,32 @@ func (s *UpdateService) PerformUpdate(ctx context.Context) error {
 	// This ensures os.Rename is atomic (same filesystem)
 	tempDir, err := os.MkdirTemp(exeDir, ".sub2api-update-*")
 	if err != nil {
-		return fmt.Errorf("failed to create temp dir: %w", err)
+		return nil, fmt.Errorf("failed to create temp dir: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// Download archive
 	archivePath := filepath.Join(tempDir, filepath.Base(downloadURL))
 	if err := s.downloadFile(ctx, downloadURL, archivePath); err != nil {
-		return fmt.Errorf("download failed: %w", err)
+		return nil, fmt.Errorf("download failed: %w", err)
 	}
 
 	// Verify checksum if available
 	if checksumURL != "" {
 		if err := s.verifyChecksum(ctx, archivePath, checksumURL); err != nil {
-			return fmt.Errorf("checksum verification failed: %w", err)
+			return nil, fmt.Errorf("checksum verification failed: %w", err)
 		}
 	}
 
 	// Extract binary from archive
 	newBinaryPath := filepath.Join(tempDir, "sub2api")
 	if err := s.extractBinary(archivePath, newBinaryPath); err != nil {
-		return fmt.Errorf("extraction failed: %w", err)
+		return nil, fmt.Errorf("extraction failed: %w", err)
 	}
 
 	// Set executable permission before replacement
 	if err := os.Chmod(newBinaryPath, 0755); err != nil {
-		return fmt.Errorf("chmod failed: %w", err)
+		return nil, fmt.Errorf("chmod failed: %w", err)
 	}
 
 	// Atomic replacement using rename pattern:
@@ -232,21 +314,24 @@ func (s *UpdateService) PerformUpdate(ctx context.Context) error {
 
 	// Step 1: Move current binary to backup
 	if err := os.Rename(exePath, backupPath); err != nil {
-		return fmt.Errorf("backup failed: %w", err)
+		return nil, fmt.Errorf("backup failed: %w", err)
 	}
 
 	// Step 2: Move new binary to target location (atomic, same filesystem)
 	if err := os.Rename(newBinaryPath, exePath); err != nil {
 		// Restore backup on failure
 		if restoreErr := os.Rename(backupPath, exePath); restoreErr != nil {
-			return fmt.Errorf("replace failed and restore failed: %w (restore error: %v)", err, restoreErr)
+			return nil, fmt.Errorf("replace failed and restore failed: %w (restore error: %v)", err, restoreErr)
 		}
-		return fmt.Errorf("replace failed (restored backup): %w", err)
+		return nil, fmt.Errorf("replace failed (restored backup): %w", err)
 	}
 
 	// Success - backup file is kept for rollback capability
 	// It will be cleaned up on next successful update
-	return nil
+	return &SystemUpdateResult{
+		Message:     "Update completed. Please restart the service.",
+		NeedRestart: true,
+	}, nil
 }
 
 // Rollback restores the previous version
@@ -274,13 +359,65 @@ func (s *UpdateService) Rollback() error {
 }
 
 func (s *UpdateService) fetchLatestRelease(ctx context.Context) (*UpdateInfo, error) {
-	release, err := s.githubClient.FetchLatestRelease(ctx, githubRepo)
+	release, err := s.githubClient.FetchLatestRelease(ctx, s.noticeRepo)
 	if err != nil {
 		return nil, err
 	}
 
 	latestVersion := strings.TrimPrefix(release.TagName, "v")
+	releaseInfo := convertGitHubRelease(release)
+	customReleaseReady := true
+	if s.artifactRepo != s.noticeRepo {
+		_, err = s.githubClient.FetchReleaseByTag(ctx, s.artifactRepo, release.TagName)
+		customReleaseReady = err == nil
+	}
 
+	return &UpdateInfo{
+		CurrentVersion:        s.currentVersion,
+		LatestVersion:         latestVersion,
+		LatestTag:             release.TagName,
+		UpstreamLatestVersion: latestVersion,
+		HasUpdate:             compareVersions(s.currentVersion, latestVersion) < 0,
+		CustomReleaseReady:    customReleaseReady,
+		DeployConfigured:      s.deployConfigured(),
+		NoticeRepo:            s.noticeRepo,
+		ArtifactRepo:          s.artifactRepo,
+		UpdateMode:            s.mode,
+		SyncPRURL:             s.syncPRURL(),
+		ReleaseInfo:           releaseInfo,
+		Cached:                false,
+		BuildType:             s.buildType,
+	}, nil
+}
+
+func (s *UpdateService) performGitHubActionsDockerUpdate(ctx context.Context, info *UpdateInfo) (*SystemUpdateResult, error) {
+	if !info.CustomReleaseReady {
+		return nil, fmt.Errorf("custom release %s is not ready in %s; merge upstream and publish your fork release first", info.LatestTag, s.artifactRepo)
+	}
+	if strings.TrimSpace(s.deployToken) == "" {
+		return nil, fmt.Errorf("UPDATE_DEPLOY_GITHUB_TOKEN is required for Docker online updates")
+	}
+
+	workflowURL, err := s.githubClient.DispatchWorkflow(ctx, s.artifactRepo, s.deployWorkflow, s.deployRef, s.deployToken, map[string]string{
+		"image_tag": info.LatestVersion,
+		"version":   info.LatestTag,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	info.DeployRunURL = workflowURL
+	return &SystemUpdateResult{
+		Message:      "Deployment workflow dispatched.",
+		NeedRestart:  false,
+		DeployRunURL: workflowURL,
+	}, nil
+}
+
+func convertGitHubRelease(release *GitHubRelease) *ReleaseInfo {
+	if release == nil {
+		return nil
+	}
 	assets := make([]Asset, len(release.Assets))
 	for i, a := range release.Assets {
 		assets[i] = Asset{
@@ -289,21 +426,27 @@ func (s *UpdateService) fetchLatestRelease(ctx context.Context) (*UpdateInfo, er
 			Size:        a.Size,
 		}
 	}
+	return &ReleaseInfo{
+		Name:        release.Name,
+		Body:        release.Body,
+		PublishedAt: release.PublishedAt,
+		HTMLURL:     release.HTMLURL,
+		Assets:      assets,
+	}
+}
 
-	return &UpdateInfo{
-		CurrentVersion: s.currentVersion,
-		LatestVersion:  latestVersion,
-		HasUpdate:      compareVersions(s.currentVersion, latestVersion) < 0,
-		ReleaseInfo: &ReleaseInfo{
-			Name:        release.Name,
-			Body:        release.Body,
-			PublishedAt: release.PublishedAt,
-			HTMLURL:     release.HTMLURL,
-			Assets:      assets,
-		},
-		Cached:    false,
-		BuildType: s.buildType,
-	}, nil
+func (s *UpdateService) deployConfigured() bool {
+	if s.mode != UpdateModeGitHubActionsDocker {
+		return true
+	}
+	return strings.TrimSpace(s.deployToken) != "" && strings.TrimSpace(s.deployWorkflow) != ""
+}
+
+func (s *UpdateService) syncPRURL() string {
+	if strings.TrimSpace(s.artifactRepo) == "" {
+		return ""
+	}
+	return "https://github.com/" + strings.Trim(strings.TrimSpace(s.artifactRepo), "/") + "/pulls"
 }
 
 func (s *UpdateService) downloadFile(ctx context.Context, downloadURL, dest string) error {
@@ -474,9 +617,14 @@ func (s *UpdateService) getFromCache(ctx context.Context) (*UpdateInfo, error) {
 	}
 
 	var cached struct {
-		Latest      string       `json:"latest"`
-		ReleaseInfo *ReleaseInfo `json:"release_info"`
-		Timestamp   int64        `json:"timestamp"`
+		Latest             string       `json:"latest"`
+		LatestTag          string       `json:"latest_tag"`
+		CustomReleaseReady bool         `json:"custom_release_ready"`
+		NoticeRepo         string       `json:"notice_repo"`
+		ArtifactRepo       string       `json:"artifact_repo"`
+		UpdateMode         string       `json:"update_mode"`
+		ReleaseInfo        *ReleaseInfo `json:"release_info"`
+		Timestamp          int64        `json:"timestamp"`
 	}
 	if err := json.Unmarshal([]byte(data), &cached); err != nil {
 		return nil, err
@@ -485,30 +633,64 @@ func (s *UpdateService) getFromCache(ctx context.Context) (*UpdateInfo, error) {
 	if time.Now().Unix()-cached.Timestamp > updateCacheTTL {
 		return nil, fmt.Errorf("cache expired")
 	}
+	if strings.TrimSpace(cached.LatestTag) == "" && strings.TrimSpace(cached.Latest) != "" {
+		cached.LatestTag = "v" + strings.TrimPrefix(cached.Latest, "v")
+	}
+	noticeRepo := nonEmpty(cached.NoticeRepo, s.noticeRepo)
+	artifactRepo := nonEmpty(cached.ArtifactRepo, s.artifactRepo)
+	customReleaseReady := cached.CustomReleaseReady
+	if artifactRepo == noticeRepo {
+		customReleaseReady = true
+	}
 
 	return &UpdateInfo{
-		CurrentVersion: s.currentVersion,
-		LatestVersion:  cached.Latest,
-		HasUpdate:      compareVersions(s.currentVersion, cached.Latest) < 0,
-		ReleaseInfo:    cached.ReleaseInfo,
-		Cached:         true,
-		BuildType:      s.buildType,
+		CurrentVersion:        s.currentVersion,
+		LatestVersion:         cached.Latest,
+		LatestTag:             cached.LatestTag,
+		UpstreamLatestVersion: cached.Latest,
+		HasUpdate:             compareVersions(s.currentVersion, cached.Latest) < 0,
+		CustomReleaseReady:    customReleaseReady,
+		DeployConfigured:      s.deployConfigured(),
+		NoticeRepo:            noticeRepo,
+		ArtifactRepo:          artifactRepo,
+		UpdateMode:            nonEmpty(cached.UpdateMode, s.mode),
+		SyncPRURL:             s.syncPRURL(),
+		ReleaseInfo:           cached.ReleaseInfo,
+		Cached:                true,
+		BuildType:             s.buildType,
 	}, nil
 }
 
 func (s *UpdateService) saveToCache(ctx context.Context, info *UpdateInfo) {
 	cacheData := struct {
-		Latest      string       `json:"latest"`
-		ReleaseInfo *ReleaseInfo `json:"release_info"`
-		Timestamp   int64        `json:"timestamp"`
+		Latest             string       `json:"latest"`
+		LatestTag          string       `json:"latest_tag"`
+		CustomReleaseReady bool         `json:"custom_release_ready"`
+		NoticeRepo         string       `json:"notice_repo"`
+		ArtifactRepo       string       `json:"artifact_repo"`
+		UpdateMode         string       `json:"update_mode"`
+		ReleaseInfo        *ReleaseInfo `json:"release_info"`
+		Timestamp          int64        `json:"timestamp"`
 	}{
-		Latest:      info.LatestVersion,
-		ReleaseInfo: info.ReleaseInfo,
-		Timestamp:   time.Now().Unix(),
+		Latest:             info.LatestVersion,
+		LatestTag:          info.LatestTag,
+		CustomReleaseReady: info.CustomReleaseReady,
+		NoticeRepo:         info.NoticeRepo,
+		ArtifactRepo:       info.ArtifactRepo,
+		UpdateMode:         info.UpdateMode,
+		ReleaseInfo:        info.ReleaseInfo,
+		Timestamp:          time.Now().Unix(),
 	}
 
 	data, _ := json.Marshal(cacheData)
 	_ = s.cache.SetUpdateInfo(ctx, string(data), time.Duration(updateCacheTTL)*time.Second)
+}
+
+func nonEmpty(value, fallback string) string {
+	if strings.TrimSpace(value) != "" {
+		return value
+	}
+	return fallback
 }
 
 // compareVersions compares two semantic versions

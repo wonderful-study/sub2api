@@ -703,6 +703,25 @@ type TestAccountRequest struct {
 	Mode    string `json:"mode"`
 }
 
+type BatchTestAccountsRequest struct {
+	AccountIDs []int64 `json:"account_ids"`
+}
+
+type BatchTestAccountResult struct {
+	AccountID int64  `json:"account_id"`
+	Success   bool   `json:"success"`
+	Status    string `json:"status"`
+	LatencyMs int64  `json:"latency_ms"`
+	Error     string `json:"error,omitempty"`
+}
+
+type BatchTestAccountsResponse struct {
+	Total   int                      `json:"total"`
+	Success int                      `json:"success"`
+	Failed  int                      `json:"failed"`
+	Results []BatchTestAccountResult `json:"results"`
+}
+
 type SyncFromCRSRequest struct {
 	BaseURL            string   `json:"base_url" binding:"required"`
 	Username           string   `json:"username" binding:"required"`
@@ -741,6 +760,92 @@ func (h *AccountHandler) Test(c *gin.Context) {
 			_ = c.Error(err)
 		}
 	}
+}
+
+type accountBackgroundTester interface {
+	RunTestBackground(ctx context.Context, accountID int64, modelID string) (*service.ScheduledTestResult, error)
+}
+
+type accountTestRecoveryFunc func(ctx context.Context, accountID int64) error
+
+const batchAccountTestMaxConcurrency = 5
+
+func runBatchAccountTests(ctx context.Context, accountIDs []int64, tester accountBackgroundTester, recovery accountTestRecoveryFunc) BatchTestAccountsResponse {
+	results := make([]BatchTestAccountResult, len(accountIDs))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(batchAccountTestMaxConcurrency)
+
+	for i, id := range accountIDs {
+		index := i
+		accountID := id
+		g.Go(func() error {
+			item := BatchTestAccountResult{
+				AccountID: accountID,
+				Status:    "failed",
+			}
+			result, err := tester.RunTestBackground(gctx, accountID, "")
+			if result != nil {
+				item.Status = result.Status
+				item.LatencyMs = result.LatencyMs
+				item.Error = result.ErrorMessage
+			}
+			if err != nil && item.Error == "" {
+				item.Error = err.Error()
+			}
+			item.Success = err == nil && item.Status == "success"
+			if item.Success && recovery != nil {
+				if recoverErr := recovery(gctx, accountID); recoverErr != nil {
+					log.Printf("[WARN] Batch account test recovery failed: account=%d err=%v", accountID, recoverErr)
+				}
+			}
+			results[index] = item
+			return nil
+		})
+	}
+
+	_ = g.Wait()
+
+	out := BatchTestAccountsResponse{
+		Total:   len(accountIDs),
+		Results: results,
+	}
+	for _, item := range results {
+		if item.Success {
+			out.Success++
+		} else {
+			out.Failed++
+		}
+	}
+	return out
+}
+
+// BatchTest handles batch testing account connectivity.
+// POST /api/v1/admin/accounts/batch-test
+func (h *AccountHandler) BatchTest(c *gin.Context) {
+	var req BatchTestAccountsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	if len(req.AccountIDs) == 0 {
+		response.BadRequest(c, "account_ids is required")
+		return
+	}
+	if h.accountTestService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Account test service unavailable")
+		return
+	}
+
+	var recovery accountTestRecoveryFunc
+	if h.rateLimitService != nil {
+		recovery = func(ctx context.Context, accountID int64) error {
+			_, err := h.rateLimitService.RecoverAccountAfterSuccessfulTest(ctx, accountID)
+			return err
+		}
+	}
+
+	result := runBatchAccountTests(c.Request.Context(), req.AccountIDs, h.accountTestService, recovery)
+	response.Success(c, result)
 }
 
 // RecoverState handles unified recovery of recoverable account runtime state.

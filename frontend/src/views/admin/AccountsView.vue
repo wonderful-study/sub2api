@@ -177,6 +177,7 @@
           @delete="handleBulkDelete"
           @reset-status="handleBulkResetStatus"
           @refresh-token="handleBulkRefreshToken"
+          @batch-test="handleBulkTestConnection"
           @edit-selected="openBulkEditSelected"
           @edit-filtered="openBulkEditFiltered"
           @clear="clearSelection"
@@ -301,18 +302,18 @@
           <template #cell-last_used_at="{ value }">
             <span class="text-sm text-gray-500 dark:text-dark-400">{{ formatRelativeTime(value) }}</span>
           </template>
-          <template #cell-expires_at="{ row, value }">
+          <template #cell-expires_at="{ row }">
             <div class="flex flex-col items-start gap-1">
-              <span class="text-sm text-gray-500 dark:text-dark-400">{{ formatExpiresAt(value) }}</span>
-              <div v-if="isExpired(value) || (row.auto_pause_on_expired && value)" class="flex items-center gap-1">
+              <span class="text-sm text-gray-500 dark:text-dark-400">{{ formatExpiresAt(getDisplayExpiresAt(row)) }}</span>
+              <div v-if="isExpired(getDisplayExpiresAt(row)) || (row.auto_pause_on_expired && hasAccountExpiresAt(row))" class="flex items-center gap-1">
                 <span
-                  v-if="isExpired(value)"
+                  v-if="isExpired(getDisplayExpiresAt(row))"
                   class="inline-flex items-center rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
                 >
                   {{ t('admin.accounts.expired') }}
                 </span>
                 <span
-                  v-if="row.auto_pause_on_expired && value"
+                  v-if="row.auto_pause_on_expired && hasAccountExpiresAt(row)"
                   class="inline-flex items-center rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
                 >
                   {{ t('admin.accounts.autoPauseOnExpired') }}
@@ -410,6 +411,7 @@ import Icon from '@/components/icons/Icon.vue'
 import ErrorPassthroughRulesModal from '@/components/admin/ErrorPassthroughRulesModal.vue'
 import TLSFingerprintProfilesModal from '@/components/admin/TLSFingerprintProfilesModal.vue'
 import { buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
+import { resolveAccountExpiryDisplay } from '@/utils/accountExpiryDisplay'
 import { formatDateTime, formatRelativeTime } from '@/utils/format'
 import type { Account, AccountPlatform, AccountType, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel } from '@/types'
 
@@ -1235,6 +1237,22 @@ const handleBulkRefreshToken = async () => {
     appStore.showError(String(error))
   }
 }
+const handleBulkTestConnection = async () => {
+  if (!confirm(t('common.confirm'))) return
+  try {
+    const result = await adminAPI.accounts.batchTest(selIds.value)
+    if (result.failed > 0) {
+      appStore.showError(t('admin.accounts.bulkActions.partialSuccess', { success: result.success, failed: result.failed }))
+    } else {
+      appStore.showSuccess(t('admin.accounts.bulkActions.testConnectionSuccess', { count: result.success }))
+      clearSelection()
+    }
+    reload()
+  } catch (error) {
+    console.error('Failed to bulk test accounts:', error)
+    appStore.showError(String(error))
+  }
+}
 const updateSchedulableInList = (accountIds: number[], schedulable: boolean) => {
   if (accountIds.length === 0) return
   const idSet = new Set(accountIds)
@@ -1623,6 +1641,8 @@ const formatExpiresAt = (value: number | null) => {
     'sv-SE'
   )
 }
+const getDisplayExpiresAt = (row: Account) => resolveAccountExpiryDisplay(row).value
+const hasAccountExpiresAt = (row: Account) => resolveAccountExpiryDisplay(row).source === 'account'
 const isExpired = (value: number | null) => {
   if (!value) return false
   return value * 1000 <= Date.now()

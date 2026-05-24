@@ -35,10 +35,10 @@ Use the automated preparation script for the easiest setup:
 
 ```bash
 # Download and run the preparation script
-curl -sSL https://raw.githubusercontent.com/Wei-Shaw/sub2api/main/deploy/docker-deploy.sh | bash
+curl -sSL https://raw.githubusercontent.com/wonderful-study/sub2api/main/deploy/docker-deploy.sh | bash
 
 # Or download first, then run
-curl -sSL https://raw.githubusercontent.com/Wei-Shaw/sub2api/main/deploy/docker-deploy.sh -o docker-deploy.sh
+curl -sSL https://raw.githubusercontent.com/wonderful-study/sub2api/main/deploy/docker-deploy.sh -o docker-deploy.sh
 chmod +x docker-deploy.sh
 ./docker-deploy.sh
 ```
@@ -181,6 +181,28 @@ docker compose -f docker-compose.local.yml up -d
 docker compose -f docker-compose.local.yml down
 rm -rf data/ postgres_data/ redis_data/
 ```
+
+### Online Experience E2E
+
+在线体验 E2E 使用真实 HTTP、JWT 鉴权和现有 OpenAI 网关链路。先在 `.env` 中配置
+测试用户：
+
+```env
+E2E_BASE_URL=http://127.0.0.1:8080
+ONLINE_EXPERIENCE_USER_EMAIL=user@example.com
+ONLINE_EXPERIENCE_USER_PASSWORD=password
+ONLINE_EXPERIENCE_GROUP_ID=
+ONLINE_EXPERIENCE_REQUIRE_UPSTREAM=false
+```
+
+然后执行：
+
+```bash
+./run-online-experience-e2e.sh
+```
+
+脚本会读取当前目录的 `.env`。如果宿主机没有安装 Go，会自动使用 Docker 中的 Go
+镜像执行 `go test -tags=e2e -v -run OnlineExperience ./internal/integration/...`。
 
 For **named volumes version** (docker-compose.yml):
 
