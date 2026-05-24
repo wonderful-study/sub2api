@@ -82,7 +82,7 @@ jobs:
           # Keep fork-owned workflow definitions; the default Actions token cannot
           # push upstream workflow file changes into this repository.
           if git ls-tree -d --name-only "origin/${BASE_BRANCH}" .github/workflows | grep -q '^.github/workflows$'; then
-            git rm -r --quiet --ignore-unmatch .github/workflows
+            git rm -r -f --quiet --ignore-unmatch .github/workflows
             git checkout "origin/${BASE_BRANCH}" -- .github/workflows
           fi
           if git diff --cached --quiet && git diff --quiet; then
