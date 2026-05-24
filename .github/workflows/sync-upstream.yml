@@ -61,7 +61,7 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "branch=sync/upstream-${TAG}" >> "$GITHUB_OUTPUT"
 
-      - name: Merge upstream tag
+      - name: Apply upstream tag
         id: merge
         env:
           TAG: ${{ steps.upstream.outputs.tag }}
@@ -70,11 +70,11 @@ jobs:
           git fetch upstream --tags --force
           git checkout -B "${{ steps.upstream.outputs.branch }}" "origin/${BASE_BRANCH}"
           set +e
-          git merge --no-edit "refs/tags/${TAG}"
+          git merge --squash --no-commit "refs/tags/${TAG}"
           status=$?
           set -e
           if [ "$status" -ne 0 ]; then
-            git merge --abort || true
+            git merge --abort || git reset --merge || git reset --hard "origin/${BASE_BRANCH}" || true
             echo "conflict=true" >> "$GITHUB_OUTPUT"
             echo "noop=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -85,10 +85,11 @@ jobs:
             git rm -r --quiet --ignore-unmatch .github/workflows
             git checkout "origin/${BASE_BRANCH}" -- .github/workflows
           fi
-          if git diff --quiet "origin/${BASE_BRANCH}..HEAD"; then
+          if git diff --cached --quiet && git diff --quiet; then
             echo "No upstream changes to sync"
             echo "noop=true" >> "$GITHUB_OUTPUT"
           else
+            git commit -m "Merge upstream ${TAG}"
             echo "noop=false" >> "$GITHUB_OUTPUT"
           fi
           echo "conflict=false" >> "$GITHUB_OUTPUT"
@@ -123,7 +124,7 @@ jobs:
           BRANCH: ${{ steps.upstream.outputs.branch }}
         run: |
           existing="$(gh pr list --state open --head "$BRANCH" --json number --jq '.[0].number // empty')"
-          body="Merges upstream ${UPSTREAM_REPO}@${TAG} into ${BASE_BRANCH}. After this PR is merged, release-on-version will create tag ${TAG} and the release workflow will publish this fork's artifacts."
+          body="Applies upstream ${UPSTREAM_REPO}@${TAG} into ${BASE_BRANCH}. After this PR is merged, release-on-version will create tag ${TAG} and the release workflow will publish this fork's artifacts."
           if [ -n "$existing" ]; then
             gh pr edit "$existing" --title "sync: upstream ${TAG}" --body "$body"
           else
