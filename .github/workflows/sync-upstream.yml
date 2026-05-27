@@ -74,6 +74,17 @@ jobs:
           git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
           git fetch upstream --tags --force
           git checkout -B "${{ steps.upstream.outputs.branch }}" "origin/${BASE_BRANCH}"
+          CURRENT_VERSION="$(tr -d '\r\n' < backend/cmd/server/VERSION || true)"
+          CURRENT_TAG="v${CURRENT_VERSION#v}"
+          UPSTREAM_VERSION="${TAG#v}"
+          if [ "$CURRENT_TAG" = "$TAG" ] || [[ "$CURRENT_VERSION" == "${UPSTREAM_VERSION}-fork."* ]]; then
+            echo "Current VERSION (${CURRENT_VERSION}) already represents ${TAG}; no upstream changes to sync"
+            echo "conflict=false" >> "$GITHUB_OUTPUT"
+            echo "unsafe=false" >> "$GITHUB_OUTPUT"
+            echo "noop=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           set +e
           git merge --squash --no-commit "refs/tags/${TAG}"
           status=$?
