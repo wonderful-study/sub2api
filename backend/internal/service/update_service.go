@@ -17,6 +17,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+)
+
+var (
+	ErrNoUpdateAvailable = infraerrors.Conflict("ALREADY_UP_TO_DATE", "no update available; current version is latest")
 )
 
 const (
@@ -216,7 +222,7 @@ func (s *UpdateService) PerformUpdate(ctx context.Context) (*SystemUpdateResult,
 	}
 
 	if !info.HasUpdate {
-		return nil, fmt.Errorf("no update available")
+		return nil, ErrNoUpdateAvailable
 	}
 
 	switch s.mode {
