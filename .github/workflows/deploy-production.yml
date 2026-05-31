@@ -66,7 +66,7 @@ jobs:
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.2.2
         with:
-          host: ${{ vars.DEPLOY_SSH_HOST || '23.251.34.211' }}
+          host: ${{ vars.DEPLOY_SSH_HOST || '156.238.254.73' }}
           username: ${{ vars.DEPLOY_SSH_USER || secrets.DEPLOY_SSH_USER || 'root' }}
           key: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
           port: ${{ vars.DEPLOY_SSH_PORT || secrets.DEPLOY_SSH_PORT || 22 }}
