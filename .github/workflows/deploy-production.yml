@@ -77,9 +77,17 @@ jobs:
             COMPOSE_FILE='${{ inputs.compose_file }}'
             SERVICE='${{ inputs.service }}'
             IMAGE_TAG='${{ inputs.image_tag }}'
+            IMAGE_NAME="ghcr.io/${{ github.repository_owner }}/sub2api"
+            IMAGE_NAME="$(printf '%s' "$IMAGE_NAME" | tr '[:upper:]' '[:lower:]')"
 
             cd "$COMPOSE_DIR"
             touch .env
+
+            if grep -q '^SUB2API_IMAGE=' .env; then
+              sed -i.bak "s|^SUB2API_IMAGE=.*|SUB2API_IMAGE=${IMAGE_NAME}|" .env
+            else
+              printf '\nSUB2API_IMAGE=%s\n' "$IMAGE_NAME" >> .env
+            fi
 
             if grep -q '^SUB2API_IMAGE_TAG=' .env; then
               sed -i.bak "s|^SUB2API_IMAGE_TAG=.*|SUB2API_IMAGE_TAG=${IMAGE_TAG}|" .env
