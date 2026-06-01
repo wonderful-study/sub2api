@@ -19,7 +19,7 @@ on:
         description: 'Deploy production after publishing the release'
         required: false
         type: boolean
-        default: true
+        default: false
 
 # 环境变量：合并 workflow_dispatch 输入和 repository variable
 # tag push 触发时读取 vars.SIMPLE_RELEASE，workflow_dispatch 时使用输入参数
@@ -321,7 +321,7 @@ jobs:
 
   auto-deploy:
     needs: [resolve-release, release]
-    if: ${{ needs.release.result == 'success' && github.event.inputs.auto_deploy != 'false' && vars.AUTO_DEPLOY_ON_RELEASE != 'false' }}
+    if: ${{ needs.release.result == 'success' && (github.event.inputs.auto_deploy == 'true' || vars.AUTO_DEPLOY_ON_RELEASE == 'true') }}
     uses: ./.github/workflows/deploy-production.yml
     with:
       image_tag: ${{ needs.resolve-release.outputs.version }}

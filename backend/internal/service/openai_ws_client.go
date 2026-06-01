@@ -11,12 +11,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	openaiwsv2 "github.com/Wei-Shaw/sub2api/internal/service/openai_ws_v2"
 	coderws "github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 )
 
-const openAIWSMessageReadLimitBytes int64 = 16 * 1024 * 1024
 const (
 	openAIWSProxyTransportMaxIdleConns        = 128
 	openAIWSProxyTransportMaxIdleConnsPerHost = 64
@@ -48,17 +48,30 @@ type openAIWSTransportMetricsDialer interface {
 	SnapshotTransportMetrics() OpenAIWSTransportMetricsSnapshot
 }
 
-func newDefaultOpenAIWSClientDialer() openAIWSClientDialer {
+func ResolveOpenAIWSReadLimitBytes(cfg *config.Config) int64 {
+	if cfg == nil || cfg.Gateway.OpenAIWS.ReadLimitBytes <= 0 {
+		return config.OpenAIWSReadLimitDefaultBytes
+	}
+	return cfg.Gateway.OpenAIWS.ReadLimitBytes
+}
+
+func newDefaultOpenAIWSClientDialer(cfgs ...*config.Config) openAIWSClientDialer {
+	var cfg *config.Config
+	if len(cfgs) > 0 {
+		cfg = cfgs[0]
+	}
 	return &coderOpenAIWSClientDialer{
-		proxyClients: make(map[string]*openAIWSProxyClientEntry),
+		readLimitBytes: ResolveOpenAIWSReadLimitBytes(cfg),
+		proxyClients:   make(map[string]*openAIWSProxyClientEntry),
 	}
 }
 
 type coderOpenAIWSClientDialer struct {
-	proxyMu      sync.Mutex
-	proxyClients map[string]*openAIWSProxyClientEntry
-	proxyHits    atomic.Int64
-	proxyMisses  atomic.Int64
+	readLimitBytes int64
+	proxyMu        sync.Mutex
+	proxyClients   map[string]*openAIWSProxyClientEntry
+	proxyHits      atomic.Int64
+	proxyMisses    atomic.Int64
 }
 
 type openAIWSProxyClientEntry struct {
@@ -101,12 +114,19 @@ func (d *coderOpenAIWSClientDialer) Dial(
 	}
 	// coder/websocket 默认单消息读取上限为 32KB，Codex WS 事件（如 rate_limits/大 delta）
 	// 可能超过该阈值，需显式提高上限，避免本地 read_fail(message too big)。
-	conn.SetReadLimit(openAIWSMessageReadLimitBytes)
+	conn.SetReadLimit(d.effectiveReadLimitBytes())
 	respHeaders := http.Header(nil)
 	if resp != nil {
 		respHeaders = cloneHeader(resp.Header)
 	}
 	return &coderOpenAIWSClientConn{conn: conn}, 0, respHeaders, nil
+}
+
+func (d *coderOpenAIWSClientDialer) effectiveReadLimitBytes() int64 {
+	if d != nil && d.readLimitBytes > 0 {
+		return d.readLimitBytes
+	}
+	return config.OpenAIWSReadLimitDefaultBytes
 }
 
 func (d *coderOpenAIWSClientDialer) proxyHTTPClient(proxy string) (*http.Client, error) {

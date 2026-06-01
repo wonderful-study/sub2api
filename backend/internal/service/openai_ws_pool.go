@@ -98,6 +98,13 @@ func (l *openAIWSConnLease) ConnID() string {
 	return l.conn.id
 }
 
+func (l *openAIWSConnLease) Age(now time.Time) time.Duration {
+	if l == nil || l.conn == nil {
+		return 0
+	}
+	return l.conn.age(now)
+}
+
 func (l *openAIWSConnLease) QueueWaitDuration() time.Duration {
 	if l == nil {
 		return 0
@@ -567,7 +574,7 @@ type openAIWSConnPool struct {
 func newOpenAIWSConnPool(cfg *config.Config) *openAIWSConnPool {
 	pool := &openAIWSConnPool{
 		cfg:          cfg,
-		clientDialer: newDefaultOpenAIWSClientDialer(),
+		clientDialer: newDefaultOpenAIWSClientDialer(cfg),
 		workerStopCh: make(chan struct{}),
 	}
 	pool.startBackgroundWorkers()
@@ -820,6 +827,12 @@ func (p *openAIWSConnPool) acquire(ctx context.Context, req openAIWSAcquireReque
 				closeOpenAIWSConns(evicted)
 				return nil, errOpenAIWSPreferredConnUnavailable
 			}
+			if p.isConnSoftExpired(preferredConn, now) {
+				p.recordConnPickDuration(time.Since(pickStartedAt))
+				ap.mu.Unlock()
+				closeOpenAIWSConns(evicted)
+				return nil, errOpenAIWSPreferredConnUnavailable
+			}
 			if preferredConn.tryAcquire() {
 				connPick := time.Since(pickStartedAt)
 				p.recordConnPickDuration(connPick)
@@ -895,7 +908,7 @@ func (p *openAIWSConnPool) acquire(ctx context.Context, req openAIWSAcquireReque
 		}
 
 		if preferredConnID != "" {
-			if conn, ok := ap.conns[preferredConnID]; ok && conn.tryAcquire() {
+			if conn, ok := ap.conns[preferredConnID]; ok && !p.isConnSoftExpired(conn, now) && conn.tryAcquire() {
 				connPick := time.Since(pickStartedAt)
 				p.recordConnPickDuration(connPick)
 				ap.mu.Unlock()
@@ -939,7 +952,7 @@ func (p *openAIWSConnPool) acquire(ctx context.Context, req openAIWSAcquireReque
 			return lease, nil
 		}
 		for _, conn := range ap.conns {
-			if conn == nil || conn == best {
+			if conn == nil || conn == best || p.isConnSoftExpired(conn, now) {
 				continue
 			}
 			if conn.tryAcquire() {
@@ -1161,7 +1174,7 @@ func (p *openAIWSConnPool) cleanupAccountLocked(ap *openAIWSAccountPool, now tim
 		if p.isConnPinnedLocked(ap, id) {
 			continue
 		}
-		if maxAge > 0 && !conn.isLeased() && conn.age(now) > maxAge {
+		if !conn.isLeased() && ((maxAge > 0 && conn.age(now) > maxAge) || p.isConnSoftExpired(conn, now)) {
 			delete(ap.conns, id)
 			if len(ap.pinnedConns) > 0 {
 				delete(ap.pinnedConns, id)
@@ -1220,17 +1233,20 @@ func (p *openAIWSConnPool) pickLeastBusyConnLocked(ap *openAIWSAccountPool, pref
 	if ap == nil || len(ap.conns) == 0 {
 		return nil
 	}
+	now := time.Now()
 	preferredConnID = stringsTrim(preferredConnID)
 	if preferredConnID != "" {
 		if conn, ok := ap.conns[preferredConnID]; ok {
-			return conn
+			if conn != nil && !p.isConnSoftExpired(conn, now) {
+				return conn
+			}
 		}
 	}
 	var best *openAIWSConn
 	var bestWaiters int32
 	var bestLastUsed time.Time
 	for _, conn := range ap.conns {
-		if conn == nil {
+		if conn == nil || p.isConnSoftExpired(conn, now) {
 			continue
 		}
 		waiters := conn.waiters.Load()
@@ -1610,6 +1626,24 @@ func (p *openAIWSConnPool) maxIdlePerAccount() int {
 
 func (p *openAIWSConnPool) maxConnAge() time.Duration {
 	return openAIWSConnMaxAge
+}
+
+func (p *openAIWSConnPool) connSoftMaxAge() time.Duration {
+	if p != nil && p.cfg != nil && p.cfg.Gateway.OpenAIWS.ConnSoftMaxAgeSeconds > 0 {
+		return time.Duration(p.cfg.Gateway.OpenAIWS.ConnSoftMaxAgeSeconds) * time.Second
+	}
+	return time.Duration(config.OpenAIWSConnSoftMaxAgeDefaultSeconds) * time.Second
+}
+
+func (p *openAIWSConnPool) isConnSoftExpired(conn *openAIWSConn, now time.Time) bool {
+	if conn == nil {
+		return true
+	}
+	softMaxAge := p.connSoftMaxAge()
+	if softMaxAge <= 0 {
+		return false
+	}
+	return conn.age(now) >= softMaxAge
 }
 
 func (p *openAIWSConnPool) queueLimitPerConn() int {

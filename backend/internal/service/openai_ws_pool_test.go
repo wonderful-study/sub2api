@@ -44,6 +44,57 @@ func TestOpenAIWSConnPool_CleanupStaleAndTrimIdle(t *testing.T) {
 	require.NotNil(t, ap.conns["idle_new"], "newer idle should be kept")
 }
 
+func TestOpenAIWSConnPool_CleanupSoftExpiredIdle(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIWS.MaxIdlePerAccount = 4
+	cfg.Gateway.OpenAIWS.ConnSoftMaxAgeSeconds = 1
+	pool := newOpenAIWSConnPool(cfg)
+
+	accountID := int64(11)
+	ap := pool.getOrCreateAccountPool(accountID)
+	expired := newOpenAIWSConn("soft_expired", accountID, &openAIWSFakeConn{}, nil)
+	expired.createdAtNano.Store(time.Now().Add(-2 * time.Second).UnixNano())
+	ap.conns[expired.id] = expired
+
+	evicted := pool.cleanupAccountLocked(ap, time.Now(), pool.maxConnsHardCap())
+	closeOpenAIWSConns(evicted)
+
+	require.Nil(t, ap.conns[expired.id], "超过软最大年龄的空闲连接应主动轮换")
+}
+
+func TestOpenAIWSConnPool_AcquireSkipsSoftExpiredConn(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 2
+	cfg.Gateway.OpenAIWS.MinIdlePerAccount = 0
+	cfg.Gateway.OpenAIWS.MaxIdlePerAccount = 2
+	cfg.Gateway.OpenAIWS.ConnSoftMaxAgeSeconds = 1
+	cfg.Gateway.OpenAIWS.DialTimeoutSeconds = 1
+
+	pool := newOpenAIWSConnPool(cfg)
+	dialer := &openAIWSCountingDialer{}
+	pool.setClientDialerForTest(dialer)
+
+	account := &Account{ID: 12, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	ap := pool.getOrCreateAccountPool(account.ID)
+	expired := newOpenAIWSConn("soft_expired_reuse", account.ID, &openAIWSFakeConn{}, nil)
+	expired.createdAtNano.Store(time.Now().Add(-2 * time.Second).UnixNano())
+	ap.mu.Lock()
+	ap.conns[expired.id] = expired
+	ap.lastCleanupAt = time.Now()
+	ap.mu.Unlock()
+
+	lease, err := pool.Acquire(context.Background(), openAIWSAcquireRequest{
+		Account: account,
+		WSURL:   "wss://example.com/v1/responses",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, lease)
+	require.False(t, lease.Reused())
+	require.NotEqual(t, expired.id, lease.ConnID())
+	require.Equal(t, 1, dialer.DialCount())
+	lease.Release()
+}
+
 func TestOpenAIWSConnPool_NextConnIDFormat(t *testing.T) {
 	pool := newOpenAIWSConnPool(&config.Config{})
 	id1 := pool.nextConnID(42)

@@ -224,7 +224,7 @@ type OpenAIWSIngressHooks struct {
 	InitialRequestModel string
 	BeforeTurn          func(turn int) error
 	BeforeRequest       func(turn int, payload []byte, originalModel string) error
-	AfterTurn           func(turn int, result *OpenAIForwardResult, turnErr error)
+	AfterTurn           func(turn int, payload []byte, result *OpenAIForwardResult, turnErr error)
 }
 
 func normalizeOpenAIWSLogValue(value string) string {
@@ -915,7 +915,7 @@ func (s *OpenAIGatewayService) getOpenAIWSPassthroughDialer() openAIWSClientDial
 	}
 	s.openaiWSPassthroughDialerOnce.Do(func() {
 		if s.openaiWSPassthroughDialer == nil {
-			s.openaiWSPassthroughDialer = newDefaultOpenAIWSClientDialer()
+			s.openaiWSPassthroughDialer = newDefaultOpenAIWSClientDialer(s.cfg)
 		}
 	})
 	return s.openaiWSPassthroughDialer
@@ -3469,6 +3469,45 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				unpinSessionConn(sessionConnID)
 			}
 		}
+		if sessionLease != nil {
+			softMaxAge := pool.connSoftMaxAge()
+			connAge := sessionLease.Age(time.Now())
+			if softMaxAge > 0 && connAge >= softMaxAge {
+				oldConnID := sessionConnID
+				if forcePreferredConn {
+					logOpenAIWSModeInfo(
+						"ingress_ws_upstream_soft_rotate_skip account_id=%d turn=%d conn_id=%s age_ms=%d soft_max_age_ms=%d reason=strict_affinity",
+						account.ID,
+						turn,
+						truncateOpenAIWSLogValue(oldConnID, openAIWSIDValueMaxLen),
+						connAge.Milliseconds(),
+						softMaxAge.Milliseconds(),
+					)
+				} else {
+					logOpenAIWSModeInfo(
+						"ingress_ws_upstream_soft_rotate account_id=%d turn=%d conn_id=%s age_ms=%d soft_max_age_ms=%d strict_affinity=%v",
+						account.ID,
+						turn,
+						truncateOpenAIWSLogValue(oldConnID, openAIWSIDValueMaxLen),
+						connAge.Milliseconds(),
+						softMaxAge.Milliseconds(),
+						forcePreferredConn,
+					)
+					resetSessionLease(true)
+					acquiredLease, acquireErr := acquireTurnLease(turn, "", false)
+					if acquireErr != nil {
+						return fmt.Errorf("acquire upstream websocket after soft rotation: %w", acquireErr)
+					}
+					sessionLease = acquiredLease
+					sessionConnID = strings.TrimSpace(sessionLease.ConnID())
+					if storeDisabled {
+						pinSessionConn(sessionConnID)
+					} else {
+						unpinSessionConn(sessionConnID)
+					}
+				}
+			}
+		}
 		shouldPreflightPing := turn > 1 && sessionLease != nil && turnRetry == 0
 		if shouldPreflightPing && openAIWSIngressPreflightPingIdle > 0 && !lastTurnFinishedAt.IsZero() {
 			if time.Since(lastTurnFinishedAt) < openAIWSIngressPreflightPingIdle {
@@ -3602,7 +3641,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				finalErr = unwrapped
 			}
 			if hooks != nil && hooks.AfterTurn != nil {
-				hooks.AfterTurn(turn, nil, finalErr)
+				hooks.AfterTurn(turn, currentPayload, nil, finalErr)
 			}
 			sessionLease.MarkBroken()
 			return finalErr
@@ -3612,7 +3651,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		lastTurnFinishedAt = time.Now()
 		lastTurnClean = true
 		if hooks != nil && hooks.AfterTurn != nil {
-			hooks.AfterTurn(turn, result, nil)
+			hooks.AfterTurn(turn, currentPayload, result, nil)
 		}
 		if result == nil {
 			return errors.New("websocket turn result is nil")

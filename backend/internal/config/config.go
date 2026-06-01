@@ -58,6 +58,15 @@ const (
 // 可通过 gateway.upstream_response_read_max_bytes 配置项覆盖。
 const DefaultUpstreamResponseReadMaxBytes int64 = 128 * 1024 * 1024
 
+const (
+	OpenAIWSReadLimitMinBytes     int64 = 1 * 1024 * 1024
+	OpenAIWSReadLimitDefaultBytes int64 = 128 * 1024 * 1024
+	OpenAIWSReadLimitMaxBytes     int64 = 128 * 1024 * 1024
+
+	OpenAIWSConnSoftMaxAgeDefaultSeconds = 55 * 60
+	OpenAIWSConnSoftMaxAgeMaxSeconds     = 60 * 60
+)
+
 type Config struct {
 	Server                  ServerConfig                  `mapstructure:"server"`
 	Log                     LogConfig                     `mapstructure:"log"`
@@ -912,6 +921,8 @@ type GatewayOpenAIWSConfig struct {
 	DialTimeoutSeconds    int     `mapstructure:"dial_timeout_seconds"`
 	ReadTimeoutSeconds    int     `mapstructure:"read_timeout_seconds"`
 	WriteTimeoutSeconds   int     `mapstructure:"write_timeout_seconds"`
+	ReadLimitBytes        int64   `mapstructure:"read_limit_bytes"`
+	ConnSoftMaxAgeSeconds int     `mapstructure:"conn_soft_max_age_seconds"`
 	PoolTargetUtilization float64 `mapstructure:"pool_target_utilization"`
 	QueueLimitPerConn     int     `mapstructure:"queue_limit_per_conn"`
 	// EventFlushBatchSize: WS 流式写出批量 flush 阈值（事件条数）
@@ -1846,6 +1857,8 @@ func setDefaults() {
 	viper.SetDefault("gateway.openai_ws.dial_timeout_seconds", 10)
 	viper.SetDefault("gateway.openai_ws.read_timeout_seconds", 900)
 	viper.SetDefault("gateway.openai_ws.write_timeout_seconds", 120)
+	viper.SetDefault("gateway.openai_ws.read_limit_bytes", OpenAIWSReadLimitDefaultBytes)
+	viper.SetDefault("gateway.openai_ws.conn_soft_max_age_seconds", OpenAIWSConnSoftMaxAgeDefaultSeconds)
 	viper.SetDefault("gateway.openai_ws.pool_target_utilization", 0.7)
 	viper.SetDefault("gateway.openai_ws.queue_limit_per_conn", 64)
 	viper.SetDefault("gateway.openai_ws.event_flush_batch_size", 1)
@@ -2561,6 +2574,18 @@ func (c *Config) Validate() error {
 	}
 	if c.Gateway.OpenAIWS.WriteTimeoutSeconds <= 0 {
 		return fmt.Errorf("gateway.openai_ws.write_timeout_seconds must be positive")
+	}
+	if c.Gateway.OpenAIWS.ReadLimitBytes < OpenAIWSReadLimitMinBytes {
+		return fmt.Errorf("gateway.openai_ws.read_limit_bytes must be at least %d bytes", OpenAIWSReadLimitMinBytes)
+	}
+	if c.Gateway.OpenAIWS.ReadLimitBytes > OpenAIWSReadLimitMaxBytes {
+		return fmt.Errorf("gateway.openai_ws.read_limit_bytes must be <= %d bytes", OpenAIWSReadLimitMaxBytes)
+	}
+	if c.Gateway.OpenAIWS.ConnSoftMaxAgeSeconds <= 0 {
+		return fmt.Errorf("gateway.openai_ws.conn_soft_max_age_seconds must be positive")
+	}
+	if c.Gateway.OpenAIWS.ConnSoftMaxAgeSeconds >= OpenAIWSConnSoftMaxAgeMaxSeconds {
+		return fmt.Errorf("gateway.openai_ws.conn_soft_max_age_seconds must be less than %d seconds", OpenAIWSConnSoftMaxAgeMaxSeconds)
 	}
 	if c.Gateway.OpenAIWS.PoolTargetUtilization <= 0 || c.Gateway.OpenAIWS.PoolTargetUtilization > 1 {
 		return fmt.Errorf("gateway.openai_ws.pool_target_utilization must be within (0,1]")

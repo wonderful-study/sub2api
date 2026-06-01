@@ -63,6 +63,23 @@ func usageRecordContext(parent context.Context, base context.Context) context.Co
 	return base
 }
 
+func openAIWSBillingRequestID(ctx context.Context, turn int, responseID string) string {
+	if turn <= 0 {
+		turn = 1
+	}
+	responseID = strings.TrimSpace(responseID)
+	if clientRequestID, _ := ctx.Value(ctxkey.ClientRequestID).(string); strings.TrimSpace(clientRequestID) != "" {
+		return fmt.Sprintf("client:%s:ws_turn:%d:%s", strings.TrimSpace(clientRequestID), turn, responseID)
+	}
+	if requestID, _ := ctx.Value(ctxkey.RequestID).(string); strings.TrimSpace(requestID) != "" {
+		return fmt.Sprintf("request:%s:ws_turn:%d:%s", strings.TrimSpace(requestID), turn, responseID)
+	}
+	if responseID != "" {
+		return fmt.Sprintf("response:%s:ws_turn:%d", responseID, turn)
+	}
+	return fmt.Sprintf("generated:%s:ws_turn:%d", uuid.NewString(), turn)
+}
+
 func wrapUsageRecordTaskContext(parent context.Context, task service.UsageRecordTask) service.UsageRecordTask {
 	if task == nil {
 		return nil
@@ -1174,7 +1191,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	defer func() {
 		_ = wsConn.CloseNow()
 	}()
-	wsConn.SetReadLimit(16 * 1024 * 1024)
+	wsConn.SetReadLimit(service.ResolveOpenAIWSReadLimitBytes(h.cfg))
 
 	ctx := c.Request.Context()
 	readCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -1432,7 +1449,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				currentAccountRelease = wrapReleaseOnDone(ctx, accountReleaseFunc)
 				return nil
 			},
-			AfterTurn: func(turn int, result *service.OpenAIForwardResult, turnErr error) {
+			AfterTurn: func(turn int, turnPayload []byte, result *service.OpenAIForwardResult, turnErr error) {
 				releaseTurnSlots()
 				if turnErr != nil {
 					if result == nil || result.ImageCount <= 0 {
@@ -1453,6 +1470,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, true, result.FirstTokenMs)
 				inboundEndpoint := GetInboundEndpoint(c)
 				upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
+				requestPayloadHash := service.HashUsageRequestPayload(turnPayload)
+				if requestPayloadHash == "" {
+					requestPayloadHash = service.HashUsageRequestPayload(firstMessage)
+				}
 				h.submitOpenAIUsageRecordTask(ctx, result, func(taskCtx context.Context) {
 					if err := h.gatewayService.RecordUsage(taskCtx, &service.OpenAIRecordUsageInput{
 						Result:             result,
@@ -1464,7 +1485,8 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 						UpstreamEndpoint:   upstreamEndpoint,
 						UserAgent:          userAgent,
 						IPAddress:          clientIP,
-						RequestPayloadHash: service.HashUsageRequestPayload(firstMessage),
+						RequestPayloadHash: requestPayloadHash,
+						BillingRequestID:   openAIWSBillingRequestID(ctx, turn, result.RequestID),
 						APIKeyService:      h.apiKeyService,
 						ChannelUsageFields: channelMappingWS.ToUsageFields(reqModel, result.UpstreamModel),
 					}); err != nil {

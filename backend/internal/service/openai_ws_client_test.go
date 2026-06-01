@@ -6,8 +6,21 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 )
+
+func TestCoderOpenAIWSClientDialer_ReadLimitFromConfig(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIWS.ReadLimitBytes = 64 * 1024 * 1024
+
+	dialer := newDefaultOpenAIWSClientDialer(cfg)
+	impl, ok := dialer.(*coderOpenAIWSClientDialer)
+	require.True(t, ok)
+	require.Equal(t, int64(64*1024*1024), impl.effectiveReadLimitBytes())
+
+	require.Equal(t, config.OpenAIWSReadLimitDefaultBytes, ResolveOpenAIWSReadLimitBytes(nil))
+}
 
 func TestCoderOpenAIWSClientDialer_ProxyHTTPClientReuse(t *testing.T) {
 	dialer := newDefaultOpenAIWSClientDialer()

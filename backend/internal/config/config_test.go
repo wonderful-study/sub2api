@@ -131,6 +131,12 @@ func TestLoadDefaultOpenAIWSConfig(t *testing.T) {
 	if cfg.Gateway.OpenAIWS.EventFlushIntervalMS != 10 {
 		t.Fatalf("Gateway.OpenAIWS.EventFlushIntervalMS = %d, want 10", cfg.Gateway.OpenAIWS.EventFlushIntervalMS)
 	}
+	if cfg.Gateway.OpenAIWS.ReadLimitBytes != OpenAIWSReadLimitDefaultBytes {
+		t.Fatalf("Gateway.OpenAIWS.ReadLimitBytes = %d, want %d", cfg.Gateway.OpenAIWS.ReadLimitBytes, OpenAIWSReadLimitDefaultBytes)
+	}
+	if cfg.Gateway.OpenAIWS.ConnSoftMaxAgeSeconds != OpenAIWSConnSoftMaxAgeDefaultSeconds {
+		t.Fatalf("Gateway.OpenAIWS.ConnSoftMaxAgeSeconds = %d, want %d", cfg.Gateway.OpenAIWS.ConnSoftMaxAgeSeconds, OpenAIWSConnSoftMaxAgeDefaultSeconds)
+	}
 	if cfg.Gateway.OpenAIWS.PrewarmCooldownMS != 300 {
 		t.Fatalf("Gateway.OpenAIWS.PrewarmCooldownMS = %d, want 300", cfg.Gateway.OpenAIWS.PrewarmCooldownMS)
 	}
@@ -1630,6 +1636,26 @@ func TestValidateConfig_OpenAIWSRules(t *testing.T) {
 			name:    "write_timeout_seconds 必须为正数",
 			mutate:  func(c *Config) { c.Gateway.OpenAIWS.WriteTimeoutSeconds = 0 },
 			wantErr: "gateway.openai_ws.write_timeout_seconds",
+		},
+		{
+			name:    "read_limit_bytes 不能小于 1MB",
+			mutate:  func(c *Config) { c.Gateway.OpenAIWS.ReadLimitBytes = OpenAIWSReadLimitMinBytes - 1 },
+			wantErr: "gateway.openai_ws.read_limit_bytes",
+		},
+		{
+			name:    "read_limit_bytes 不能大于 128MB",
+			mutate:  func(c *Config) { c.Gateway.OpenAIWS.ReadLimitBytes = OpenAIWSReadLimitMaxBytes + 1 },
+			wantErr: "gateway.openai_ws.read_limit_bytes",
+		},
+		{
+			name:    "conn_soft_max_age_seconds 必须为正数",
+			mutate:  func(c *Config) { c.Gateway.OpenAIWS.ConnSoftMaxAgeSeconds = 0 },
+			wantErr: "gateway.openai_ws.conn_soft_max_age_seconds",
+		},
+		{
+			name:    "conn_soft_max_age_seconds 必须小于官方硬上限",
+			mutate:  func(c *Config) { c.Gateway.OpenAIWS.ConnSoftMaxAgeSeconds = OpenAIWSConnSoftMaxAgeMaxSeconds },
+			wantErr: "gateway.openai_ws.conn_soft_max_age_seconds",
 		},
 		{
 			name:    "pool_target_utilization 必须在 (0,1]",

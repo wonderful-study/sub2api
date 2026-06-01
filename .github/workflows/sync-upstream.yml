@@ -1,8 +1,6 @@
 name: Sync Upstream
 
 on:
-  schedule:
-    - cron: '17 */6 * * *'
   workflow_dispatch:
     inputs:
       upstream_repo:
@@ -199,7 +197,7 @@ jobs:
           BRANCH: ${{ steps.upstream.outputs.branch }}
         run: |
           existing="$(gh pr list --state open --head "$BRANCH" --json number --jq '.[0].number // empty')"
-          body="Applies upstream ${UPSTREAM_REPO}@${TAG} into ${BASE_BRANCH}. After this PR is merged, release-on-version will create tag ${TAG} and the release workflow will publish this fork's artifacts."
+          body="Applies upstream ${UPSTREAM_REPO}@${TAG} into ${BASE_BRANCH}. After this PR is merged, create the release tag or run the release workflow manually, then deploy manually when ready."
           if [ -n "$existing" ]; then
             gh pr edit "$existing" --title "sync: upstream ${TAG}" --body "$body"
           else

@@ -701,8 +701,8 @@ func nonEmpty(value, fallback string) string {
 
 // compareVersions compares two semantic versions
 func compareVersions(current, latest string) int {
-	currentParts := parseVersion(current)
-	latestParts := parseVersion(latest)
+	currentParts := parseComparableVersion(current)
+	latestParts := parseComparableVersion(latest)
 
 	for i := 0; i < 3; i++ {
 		if currentParts[i] < latestParts[i] {
@@ -715,8 +715,12 @@ func compareVersions(current, latest string) int {
 	return 0
 }
 
-func parseVersion(v string) [3]int {
+func parseComparableVersion(v string) [3]int {
+	v = strings.TrimSpace(v)
 	v = strings.TrimPrefix(v, "v")
+	if suffixIndex := strings.IndexAny(v, "-+"); suffixIndex >= 0 {
+		v = v[:suffixIndex]
+	}
 	parts := strings.Split(v, ".")
 	result := [3]int{0, 0, 0}
 	for i := 0; i < len(parts) && i < 3; i++ {

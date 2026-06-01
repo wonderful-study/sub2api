@@ -74,7 +74,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_KeepLeaseAcrossT
 	serverErrCh := make(chan error, 1)
 	turnWSModeCh := make(chan bool, 2)
 	hooks := &OpenAIWSIngressHooks{
-		AfterTurn: func(_ int, result *OpenAIForwardResult, turnErr error) {
+		AfterTurn: func(_ int, _ []byte, result *OpenAIForwardResult, turnErr error) {
 			if turnErr == nil && result != nil {
 				turnWSModeCh <- result.OpenAIWSMode
 			}
@@ -482,7 +482,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughModeR
 	serverErrCh := make(chan error, 1)
 	resultCh := make(chan *OpenAIForwardResult, 1)
 	hooks := &OpenAIWSIngressHooks{
-		AfterTurn: func(_ int, result *OpenAIForwardResult, turnErr error) {
+		AfterTurn: func(_ int, _ []byte, result *OpenAIForwardResult, turnErr error) {
 			if turnErr == nil && result != nil {
 				resultCh <- result
 			}
@@ -2665,7 +2665,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_WriteFailBeforeD
 			hooksMu.Unlock()
 			return nil
 		},
-		AfterTurn: func(turn int, _ *OpenAIForwardResult, _ error) {
+		AfterTurn: func(turn int, _ []byte, _ *OpenAIForwardResult, _ error) {
 			hooksMu.Lock()
 			afterTurnCalls[turn]++
 			hooksMu.Unlock()
@@ -3502,7 +3502,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_ClientDisconnect
 	serverErrCh := make(chan error, 1)
 	resultCh := make(chan *OpenAIForwardResult, 1)
 	hooks := &OpenAIWSIngressHooks{
-		AfterTurn: func(_ int, result *OpenAIForwardResult, turnErr error) {
+		AfterTurn: func(_ int, _ []byte, result *OpenAIForwardResult, turnErr error) {
 			if turnErr == nil && result != nil {
 				resultCh <- result
 			}
