@@ -17,7 +17,7 @@ func TestUsageLogRequestIDAllowsWSBillingKeys(t *testing.T) {
 	require.Error(t, runStringValidators(validators, strings.Repeat("x", 256)))
 	require.Error(t, runStringValidators(validators, ""))
 
-	require.Equal(t, 255, requireColumn(t, entmigrate.UsageLogsColumns, "request_id").Size)
+	require.Equal(t, int64(255), requireColumn(t, entmigrate.UsageLogsColumns, "request_id").Size)
 }
 
 func requireStringFieldValidators(t *testing.T, fields []ent.Field, name string) []func(string) error {

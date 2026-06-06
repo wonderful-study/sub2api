@@ -2856,7 +2856,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				writeClientMessage,
 			)
 			if hooks != nil && hooks.AfterTurn != nil {
-				hooks.AfterTurn(turn, result, bridgeErr)
+				hooks.AfterTurn(turn, bridgePayloadRaw, result, bridgeErr)
 			}
 			if bridgeErr != nil {
 				return bridgeErr
