@@ -33,9 +33,9 @@ func (s *openaiOAuthClientRefreshStub) RefreshTokenWithClientID(ctx context.Cont
 func TestOpenAIOAuthService_RefreshAccountToken_NoRefreshTokenUsesExistingAccessToken(t *testing.T) {
 	client := &openaiOAuthClientRefreshStub{}
 	svc := NewOpenAIOAuthService(nil, client)
-	var metadataCalls int32
+	var privacyClientCalls int32
 	svc.SetPrivacyClientFactory(func(proxyURL string) (*req.Client, error) {
-		atomic.AddInt32(&metadataCalls, 1)
+		atomic.AddInt32(&privacyClientCalls, 1)
 		return nil, errors.New("factory failed")
 	})
 
@@ -57,7 +57,7 @@ func TestOpenAIOAuthService_RefreshAccountToken_NoRefreshTokenUsesExistingAccess
 	require.Equal(t, "existing-access-token", info.AccessToken)
 	require.Equal(t, "client-id-1", info.ClientID)
 	require.Zero(t, atomic.LoadInt32(&client.refreshCalls), "existing access token should be reused without calling refresh")
-	require.NotZero(t, atomic.LoadInt32(&metadataCalls), "existing access token should still refresh account metadata")
+	require.Positive(t, atomic.LoadInt32(&privacyClientCalls), "existing access token should still run enrichment")
 }
 
 func TestOpenAIOAuthService_BuildAccountCredentials_FreeClearsSubscriptionExpiry(t *testing.T) {
