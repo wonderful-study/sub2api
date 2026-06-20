@@ -537,15 +537,17 @@ const formatNumber = (value: number): string => {
   return value.toLocaleString()
 }
 
-const formatCost = (value: number): string => {
-  if (value >= 1000) {
-    return (value / 1000).toFixed(2) + 'K'
-  } else if (value >= 1) {
-    return value.toFixed(2)
-  } else if (value >= 0.01) {
-    return value.toFixed(3)
+const formatCost = (value: number | null | undefined): string => {
+  const amount = Number(value ?? 0)
+  const safeAmount = Number.isFinite(amount) ? amount : 0
+  if (safeAmount >= 1000) {
+    return (safeAmount / 1000).toFixed(2) + 'K'
+  } else if (safeAmount >= 1) {
+    return safeAmount.toFixed(2)
+  } else if (safeAmount >= 0.01) {
+    return safeAmount.toFixed(3)
   }
-  return value.toFixed(4)
+  return safeAmount.toFixed(4)
 }
 
 const formatDuration = (ms: number): string => {

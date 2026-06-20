@@ -500,17 +500,33 @@ async function handleVerify(): Promise<void> {
     }
 
     if (isPendingOAuthFlow()) {
+      const pendingOAuthPayload: {
+        email: string
+        password: string
+        verify_code: string
+        invitation_code?: string
+        aff_code?: string
+        adopt_display_name?: boolean
+        adopt_avatar?: boolean
+      } = {
+        email: email.value,
+        password: password.value,
+        verify_code: verifyCode.value.trim(),
+        ...oauthAffiliatePayload(affCode.value || loadAffiliateReferralCode())
+      }
+      if (invitationCode.value) {
+        pendingOAuthPayload.invitation_code = invitationCode.value
+      }
+      if (pendingAdoptionDecision.value?.adoptDisplayName !== undefined) {
+        pendingOAuthPayload.adopt_display_name = pendingAdoptionDecision.value.adoptDisplayName
+      }
+      if (pendingAdoptionDecision.value?.adoptAvatar !== undefined) {
+        pendingOAuthPayload.adopt_avatar = pendingAdoptionDecision.value.adoptAvatar
+      }
+
       const { data } = await apiClient.post<PendingOAuthCreateAccountResponse>(
         '/auth/oauth/pending/create-account',
-        {
-          email: email.value,
-          password: password.value,
-          verify_code: verifyCode.value.trim(),
-          invitation_code: invitationCode.value || undefined,
-          ...oauthAffiliatePayload(affCode.value || loadAffiliateReferralCode()),
-          adopt_display_name: pendingAdoptionDecision.value?.adoptDisplayName,
-          adopt_avatar: pendingAdoptionDecision.value?.adoptAvatar
-        }
+        pendingOAuthPayload
       )
       if (isPendingOAuthSessionResponse(data)) {
         sessionStorage.removeItem('register_data')
